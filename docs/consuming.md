@@ -71,22 +71,6 @@ The host doesn't enable `egui/default_fonts`. An app that may run where no syste
 
 `egui-mev-icons-subset --scan src --out assets/fonts/lucide-subset.ttf` cuts a Lucide subset, and `--check` fails when the committed one is stale. Subsets depend on the `lucide-icons` version, so a project moving to this toolkit's version regenerates its subset once.
 
-## Access while the repository is private
-
-**On your machine**, in `~/.gitconfig` and `~/.cargo/config.toml`:
-
-```ini
-[url "git@github.com:Leinnan/egui_mev_toolkit"]
-    insteadOf = https://github.com/Leinnan/egui_mev_toolkit
-```
-
-```toml
-[net]
-git-fetch-with-cli = true
-```
-
-Going public later changes no manifest or lockfile.
-
 ## Trying toolkit changes in a project
 
 From the project's checkout:
