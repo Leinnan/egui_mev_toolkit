@@ -326,7 +326,9 @@ impl SettingsGroup<'_> {
             );
         }
         self.rows += 1;
-        setting_row(self.ui, title, description, control)
+        setting_row(self.ui, title, description, |ui| {
+            ui.name_inputs(title, control)
+        })
     }
 
     /// A row of explanatory text with no control.
@@ -779,6 +781,18 @@ mod tests {
             measured
         };
         assert_eq!(width(20) - width(4), 32.0);
+    }
+
+    #[test]
+    fn a_settings_row_names_its_controls() {
+        let mut text = String::new();
+        let mut harness = egui_kittest::Harness::new_ui(|ui| {
+            settings_group(ui, "General", |group| {
+                group.row("Terminal", None, |ui| ui.add(text_field(ui, &mut text)));
+            });
+        });
+        harness.run();
+        harness.get_by_role_and_label(egui::Role::TextInput, "Terminal");
     }
 
     #[test]
