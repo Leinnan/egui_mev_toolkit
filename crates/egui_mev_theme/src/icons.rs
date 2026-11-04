@@ -8,6 +8,10 @@ use std::sync::Arc;
 
 use egui::{FontData, FontDefinitions, FontFamily, FontId, RichText};
 
+/// Name of the font family holding Segoe Fluent Icons, registered when
+/// [`crate::FontOptions::fluent_icons`] finds the system's font.
+pub const FLUENT_ICONS_FAMILY: &str = "fluent_icons";
+
 /// Default size of an icon (px).
 pub const ICON_SIZE: f32 = 16.0;
 
@@ -60,6 +64,72 @@ impl From<lucide_icons::Icon> for Glyph {
     fn from(icon: lucide_icons::Icon) -> Self {
         Self::new(char::from(icon))
     }
+}
+
+#[cfg(feature = "lucide")]
+impl Glyph {
+    /// `icon` in the set native to `ctx`'s theme: the Segoe Fluent Icons glyph
+    /// under the Fluent family when the font is there, otherwise Lucide.
+    #[must_use]
+    pub fn themed(ctx: &egui::Context, icon: lucide_icons::Icon) -> Self {
+        let family = FontFamily::Name(FLUENT_ICONS_FAMILY.into());
+        match fluent_codepoint(icon) {
+            Some(ch)
+                if crate::ThemeFamily::of_ctx(ctx) == crate::ThemeFamily::Fluent
+                    && ctx.fonts(|fonts| fonts.definitions().families.contains_key(&family)) =>
+            {
+                Self { ch, family }
+            }
+            _ => Self::from(icon),
+        }
+    }
+}
+
+/// The Segoe Fluent Icons codepoint matching a Lucide `icon`, for icons with a
+/// clear match. `None` keeps the Lucide glyph.
+#[cfg(feature = "lucide")]
+#[must_use]
+pub const fn fluent_codepoint(icon: lucide_icons::Icon) -> Option<char> {
+    use lucide_icons::Icon;
+    let codepoint = match icon {
+        Icon::Plus => '\u{E710}',
+        Icon::X => '\u{E711}',
+        Icon::Settings => '\u{E713}',
+        Icon::Video => '\u{E714}',
+        Icon::Search => '\u{E721}',
+        Icon::Cctv | Icon::Camera => '\u{E722}',
+        Icon::RefreshCw => '\u{E72C}',
+        Icon::Trash2 => '\u{E74D}',
+        Icon::ChevronLeft => '\u{E76B}',
+        Icon::ChevronRight => '\u{E76C}',
+        Icon::Globe => '\u{E774}',
+        Icon::ClipboardPaste => '\u{E77F}',
+        Icon::Redo2 => '\u{E7A6}',
+        Icon::Undo2 => '\u{E7A7}',
+        Icon::TriangleAlert => '\u{E7BA}',
+        Icon::Monitor => '\u{E7F4}',
+        Icon::Laptop => '\u{E7F8}',
+        Icon::Home | Icon::House => '\u{E80F}',
+        Icon::FolderOpen => '\u{E838}',
+        Icon::Eye => '\u{E890}',
+        Icon::Download => '\u{E896}',
+        Icon::FileText => '\u{E8A5}',
+        Icon::Folder => '\u{E8B7}',
+        Icon::Copy => '\u{E8C8}',
+        Icon::Music => '\u{E8D6}',
+        Icon::KeyRound => '\u{E8D7}',
+        Icon::Check => '\u{E8FB}',
+        Icon::Wrench => '\u{E90F}',
+        Icon::CircleCheck => '\u{E930}',
+        Icon::Info => '\u{E946}',
+        Icon::SlidersHorizontal => '\u{E9E9}',
+        Icon::ShieldCheck => '\u{EA18}',
+        Icon::Image => '\u{EB9F}',
+        Icon::Blocks => '\u{ECAA}',
+        Icon::EyeOff => '\u{ED1A}',
+        _ => return None,
+    };
+    Some(codepoint)
 }
 
 /// A Lucide icon as rich text at the default size.
@@ -125,5 +195,56 @@ impl IconFont {
             .entry(FontFamily::Name(name.into()))
             .or_default()
             .push(name.to_owned());
+    }
+}
+
+#[cfg(all(test, feature = "lucide"))]
+mod tests {
+    use egui::{Context, FontFamily};
+    use lucide_icons::Icon;
+
+    use super::{FLUENT_ICONS_FAMILY, Glyph, fluent_codepoint};
+    use crate::{AccentShades, FontOptions, fluent, fonts, run_frame};
+
+    #[test]
+    fn mapped_icons_are_in_segoe_private_use_area() {
+        for icon in [Icon::Plus, Icon::Trash2, Icon::Search, Icon::EyeOff] {
+            let codepoint = fluent_codepoint(icon).expect("mapped");
+            assert!(('\u{E700}'..='\u{F8FF}').contains(&codepoint));
+        }
+    }
+
+    #[test]
+    fn graphite_keeps_lucide() {
+        let ctx = Context::default();
+        run_frame(&ctx, |_| {});
+        assert_eq!(Glyph::themed(&ctx, Icon::Plus), Glyph::from(Icon::Plus));
+    }
+
+    #[test]
+    fn fluent_falls_back_to_lucide_without_the_font() {
+        let ctx = Context::default();
+        fluent::theme(AccentShades::WINDOWS_DEFAULT).install(&ctx);
+        fonts::install_test(&ctx, &FontOptions::default());
+        run_frame(&ctx, |_| {});
+        assert_eq!(Glyph::themed(&ctx, Icon::Plus), Glyph::from(Icon::Plus));
+    }
+
+    #[test]
+    fn fluent_uses_the_font_when_it_is_there() {
+        let ctx = Context::default();
+        fluent::theme(AccentShades::WINDOWS_DEFAULT).install(&ctx);
+        let mut definitions = egui::FontDefinitions::default();
+        definitions.families.insert(
+            FontFamily::Name(FLUENT_ICONS_FAMILY.into()),
+            definitions.families[&FontFamily::Proportional].clone(),
+        );
+        ctx.set_fonts(definitions);
+        run_frame(&ctx, |_| {});
+        let glyph = Glyph::themed(&ctx, Icon::Plus);
+        assert_eq!(glyph.ch, '\u{E710}');
+        assert_eq!(glyph.family, FontFamily::Name(FLUENT_ICONS_FAMILY.into()));
+        // An icon with no match stays Lucide.
+        assert_eq!(Glyph::themed(&ctx, Icon::Anvil), Glyph::from(Icon::Anvil));
     }
 }

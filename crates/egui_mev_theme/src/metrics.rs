@@ -19,6 +19,14 @@ pub struct Metrics {
     pub interact_height: f32,
     /// Height of a list or tree row (px).
     pub row_height: f32,
+    /// Height of one row in a settings group (px).
+    pub settings_row_height: f32,
+    /// Size of a toolbar's icon button (px).
+    pub toolbar_icon_size: [f32; 2],
+    /// Vertical margin of a toolbar (px).
+    pub toolbar_margin: i8,
+    /// Horizontal margin inside a text field (px).
+    pub text_field_margin: i8,
     /// Height of a single-line navigation row (px).
     pub nav_row_height: f32,
     /// Height of a two-line navigation row (px).
@@ -53,6 +61,10 @@ impl Metrics {
         control_height: 30.0,
         interact_height: 22.0,
         row_height: 26.0,
+        settings_row_height: 44.0,
+        toolbar_icon_size: [28.0, 24.0],
+        toolbar_margin: 8,
+        text_field_margin: 8,
         nav_row_height: 26.0,
         nav_row_height_two_line: 40.0,
         card_gap: 8.0,
@@ -61,6 +73,32 @@ impl Metrics {
         pane_gap: 4.0,
         pane_padding: 8,
         caption: 12.0,
+        body: 13.0,
+        subtitle: 15.0,
+        title: 17.0,
+    };
+
+    /// Roomier desktop sizing, with taller controls and rounder cards.
+    pub const COMFORTABLE: Self = Self {
+        control_radius: 6,
+        card_radius: 10,
+        overlay_radius: 12,
+        pane_radius: 10,
+        control_height: 28.0,
+        interact_height: 28.0,
+        row_height: 28.0,
+        settings_row_height: 44.0,
+        toolbar_icon_size: [28.0, 28.0],
+        toolbar_margin: 8,
+        text_field_margin: 8,
+        nav_row_height: 28.0,
+        nav_row_height_two_line: 44.0,
+        card_gap: 8.0,
+        card_padding: 12,
+        label_width: 120.0,
+        pane_gap: 4.0,
+        pane_padding: 8,
+        caption: 11.0,
         body: 13.0,
         subtitle: 15.0,
         title: 17.0,
@@ -75,6 +113,10 @@ impl Metrics {
         control_height: 22.0,
         interact_height: 22.0,
         row_height: 24.0,
+        settings_row_height: 36.0,
+        toolbar_icon_size: [24.0, 22.0],
+        toolbar_margin: 4,
+        text_field_margin: 6,
         nav_row_height: 24.0,
         nav_row_height_two_line: 36.0,
         card_gap: 6.0,
@@ -97,6 +139,10 @@ impl Metrics {
         control_height: 32.0,
         interact_height: 32.0,
         row_height: 36.0,
+        settings_row_height: 48.0,
+        toolbar_icon_size: [36.0, 32.0],
+        toolbar_margin: 6,
+        text_field_margin: 4,
         nav_row_height: 36.0,
         nav_row_height_two_line: 48.0,
         card_gap: 8.0,

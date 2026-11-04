@@ -7,7 +7,7 @@
 
 use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Style, Theme, Visuals, style};
 
-use crate::{Metrics, Palette, Theme as MevTheme};
+use crate::{AccentShades, Metrics, Palette, Theme as MevTheme, ThemeFamily};
 
 /// Control fills (rest, hover, pressed) — WinUI `ControlFillColor*`.
 const fn control_fills(theme: Theme) -> (Color32, Color32, Color32) {
@@ -109,7 +109,8 @@ fn visuals(theme: Theme, p: &Palette, m: &Metrics) -> Visuals {
     w.active.bg_fill = p.accent;
     w.active.weak_bg_fill = pressed;
     w.active.bg_stroke = Stroke::new(1.0, p.border);
-    w.active.fg_stroke = Stroke::new(1.0, p.text_weak);
+    // Full `text`, not `text_weak`: egui's strong text reads this colour too.
+    w.active.fg_stroke = Stroke::new(1.0, p.text);
     w.active.corner_radius = control;
     w.active.expansion = 0.0;
 
@@ -120,71 +121,6 @@ fn visuals(theme: Theme, p: &Palette, m: &Metrics) -> Visuals {
     w.open.corner_radius = control;
     w.open.expansion = 0.0;
     v
-}
-
-/// The seven shades of a Windows accent colour, lightest first, as stored in
-/// the `AccentPalette` registry value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AccentShades {
-    /// `SystemAccentColorLight3`.
-    pub light3: Color32,
-    /// `SystemAccentColorLight2` — the accent fill in dark mode.
-    pub light2: Color32,
-    /// `SystemAccentColorLight1`.
-    pub light1: Color32,
-    /// `SystemAccentColor`.
-    pub base: Color32,
-    /// `SystemAccentColorDark1` — the accent fill in light mode.
-    pub dark1: Color32,
-    /// `SystemAccentColorDark2`.
-    pub dark2: Color32,
-    /// `SystemAccentColorDark3`.
-    pub dark3: Color32,
-}
-
-impl AccentShades {
-    /// The Windows 11 default blue accent.
-    pub const WINDOWS_DEFAULT: Self = Self {
-        light3: Color32::from_rgb(0x99, 0xEB, 0xFF),
-        light2: Color32::from_rgb(0x60, 0xCD, 0xFF),
-        light1: Color32::from_rgb(0x00, 0x91, 0xF8),
-        base: Color32::from_rgb(0x00, 0x78, 0xD4),
-        dark1: Color32::from_rgb(0x00, 0x5F, 0xB8),
-        dark2: Color32::from_rgb(0x00, 0x3E, 0x92),
-        dark3: Color32::from_rgb(0x00, 0x1A, 0x68),
-    };
-
-    /// Parses the 32-byte `AccentPalette` registry value: eight RGBA
-    /// quadruplets, lightest first (the eighth entry is unused).
-    ///
-    /// Returns `None` when the value is shorter than seven colours.
-    #[must_use]
-    pub fn from_accent_palette_bytes(bytes: &[u8]) -> Option<Self> {
-        let color = |index: usize| {
-            let chunk = bytes.get(index * 4..index * 4 + 3)?;
-            Some(Color32::from_rgb(chunk[0], chunk[1], chunk[2]))
-        };
-        Some(Self {
-            light3: color(0)?,
-            light2: color(1)?,
-            light1: color(2)?,
-            base: color(3)?,
-            dark1: color(4)?,
-            dark2: color(5)?,
-            dark3: color(6)?,
-        })
-    }
-
-    /// The system accent shades: read from the registry on Windows, the
-    /// Windows default blue elsewhere or when the value is unavailable.
-    #[must_use]
-    pub fn system() -> Self {
-        #[cfg(windows)]
-        if let Some(shades) = crate::win32::system_accent() {
-            return shades;
-        }
-        Self::WINDOWS_DEFAULT
-    }
 }
 
 /// Builds the Fluent (WinUI 3) dark palette around `accent`.
@@ -321,6 +257,7 @@ pub fn mica_variant(opaque: &Palette, theme: egui::Theme) -> Palette {
 pub fn theme(accent: AccentShades) -> MevTheme {
     MevTheme {
         style,
+        family: ThemeFamily::Fluent,
         ..MevTheme::new(fluent_dark(accent), fluent_light(accent)).with_metrics(Metrics::FLUENT)
     }
 }
@@ -330,6 +267,7 @@ pub fn theme(accent: AccentShades) -> MevTheme {
 pub fn mica_theme(accent: AccentShades) -> MevTheme {
     MevTheme {
         style,
+        family: ThemeFamily::Fluent,
         ..MevTheme::new(
             mica_variant(&fluent_dark(accent), Theme::Dark),
             mica_variant(&fluent_light(accent), Theme::Light),
@@ -359,21 +297,16 @@ mod tests {
     }
 
     #[test]
-    fn parses_accent_palette_registry_bytes() {
-        let bytes: [u8; 32] = [
-            0x99, 0xEB, 0xFF, 0x00, 0x4C, 0xC2, 0xFF, 0x00, 0x00, 0x91, 0xF8, 0x00, 0x00, 0x78,
-            0xD4, 0x00, 0x00, 0x67, 0xC0, 0x00, 0x00, 0x3E, 0x92, 0x00, 0x00, 0x1A, 0x68, 0x00,
-            0xF7, 0x63, 0x0C, 0x00,
-        ];
-        let shades = AccentShades::from_accent_palette_bytes(&bytes).expect("valid palette");
-        assert_eq!(shades.light2, Color32::from_rgb(0x4C, 0xC2, 0xFF));
-        assert_eq!(shades.base, Color32::from_rgb(0x00, 0x78, 0xD4));
-        assert_eq!(shades.dark3, Color32::from_rgb(0x00, 0x1A, 0x68));
-    }
-
-    #[test]
-    fn rejects_truncated_accent_palette() {
-        assert_eq!(AccentShades::from_accent_palette_bytes(&[0; 20]), None);
+    fn strong_text_is_not_dimmed() {
+        let accent = AccentShades::WINDOWS_DEFAULT;
+        let m = Metrics::FLUENT;
+        for (mode, palette) in [
+            (Theme::Dark, fluent_dark(accent)),
+            (Theme::Light, fluent_light(accent)),
+        ] {
+            let visuals = style(&Style::default(), mode, &palette, &m).visuals;
+            assert_eq!(visuals.strong_text_color(), palette.text);
+        }
     }
 
     #[test]
@@ -391,6 +324,7 @@ mod tests {
         let ctx = egui::Context::default();
         theme(AccentShades::WINDOWS_DEFAULT).install(&ctx);
         assert_eq!(Metrics::of_ctx(&ctx), Metrics::FLUENT);
+        assert_eq!(ThemeFamily::of_ctx(&ctx), ThemeFamily::Fluent);
         let dark = ctx.style_of(Theme::Dark);
         let light = ctx.style_of(Theme::Light);
         assert_eq!(dark.spacing.interact_size.y, Metrics::FLUENT.control_height);

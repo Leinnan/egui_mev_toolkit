@@ -9,7 +9,7 @@ use egui::{
     emath::Numeric,
     vec2,
 };
-use egui_mev_theme::{Metrics, Palette};
+use egui_mev_theme::{Metrics, Palette, ThemeFamily};
 
 // ---------------------------------------------------------------------------
 // Key/value rows and form rows
@@ -119,15 +119,8 @@ pub fn form_label_width(ui: &mut Ui, width: f32, label: &str) -> Id {
 /// A System Settings style group: an optional semibold title above a full-width
 /// rounded box holding `add_body`.
 pub fn grouped_form<R>(ui: &mut Ui, title: Option<&str>, add_body: impl FnOnce(&mut Ui) -> R) -> R {
-    let p = Palette::of(ui);
-    let m = Metrics::of(ui);
     if let Some(title) = title {
-        ui.label(
-            RichText::new(title)
-                .strong()
-                .size(m.body)
-                .color(p.text_weak),
-        );
+        crate::containers::group_title(ui, title);
         ui.add_space(2.0);
     }
     crate::containers::card_frame(ui)
@@ -139,12 +132,19 @@ pub fn grouped_form<R>(ui: &mut Ui, title: Option<&str>, add_body: impl FnOnce(&
 }
 
 /// Slider visuals for the rest of `ui`: a rail that shows on a card (the default
-/// rail is the card's own fill) and a dim accent trailing fill.
+/// rail is the card's own fill) and a trailing fill that shows on the rail. On a
+/// light card the recessed well is as white as the card, and the dim accent as pale
+/// as the rail, so light looks take the track and the accent.
 fn slider_style(ui: &mut Ui) {
     let p = Palette::of(ui);
+    let (rail, trailing) = if ui.visuals().dark_mode {
+        (p.extreme_bg, p.accent_dim)
+    } else {
+        (p.control_track, p.accent)
+    };
     let visuals = ui.visuals_mut();
-    visuals.widgets.inactive.bg_fill = p.extreme_bg;
-    visuals.selection.bg_fill = p.accent_dim;
+    visuals.widgets.inactive.bg_fill = rail;
+    visuals.selection.bg_fill = trailing;
 }
 
 /// A labelled slider: the label column, a filled track and the value.
@@ -182,10 +182,20 @@ pub fn slider_row_suffix<N: Numeric>(
 // Switches, settings groups and key caps
 // ---------------------------------------------------------------------------
 
+/// Size of a switch: macOS `NSSwitch` or `WinUI` `ToggleSwitch`.
+const fn switch_size(family: ThemeFamily) -> Vec2 {
+    match family {
+        ThemeFamily::Graphite => Vec2::new(32.0, 18.0),
+        ThemeFamily::Fluent => Vec2::new(40.0, 20.0),
+    }
+}
+
 /// An on/off switch, as Windows and macOS settings use for options that apply
-/// at once. `label` names it for screen readers and tests.
+/// at once: a filled macOS switch, or a `WinUI` `ToggleSwitch` (outlined when off,
+/// accent when on). `label` names it for screen readers and tests.
 pub fn toggle_switch(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
-    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(40.0, 20.0), Sense::click());
+    let family = ThemeFamily::of(ui);
+    let (rect, mut response) = ui.allocate_exact_size(switch_size(family), Sense::click());
     if response.clicked() {
         *on = !*on;
         response.mark_changed();
@@ -194,42 +204,75 @@ pub fn toggle_switch(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
     response.widget_info(|| WidgetInfo::selected(Role::CheckBox, ui.is_enabled(), checked, label));
     if ui.is_rect_visible(rect) {
         let t = ui.ctx().animate_bool_responsive(response.id, checked);
-        let p = Palette::of(ui);
-        let dim = |color: Color32| {
-            if ui.is_enabled() {
-                color
-            } else {
-                color.gamma_multiply(0.45)
-            }
-        };
-        let hovered = response.hovered() && ui.is_enabled();
-        let (fill, stroke, knob) = if checked {
-            let accent = if hovered { p.accent_hover } else { p.accent };
-            (dim(accent), Stroke::NONE, dim(p.on_accent))
-        } else {
-            let fill = if hovered {
-                p.subtle_hover
-            } else {
-                Color32::TRANSPARENT
-            };
-            (fill, Stroke::new(1.0, dim(p.text_weak)), dim(p.text_weak))
-        };
-        let painter = ui.painter();
-        let radius = rect.height() / 2.0;
-        painter.rect(rect, radius, fill, stroke, egui::StrokeKind::Inside);
-        let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
-        let knob_radius = if hovered { 6.0 } else { 5.0 };
-        painter.circle_filled(egui::pos2(x, rect.center().y), knob_radius, knob);
+        match family {
+            ThemeFamily::Graphite => paint_graphite_switch(ui, rect, t),
+            ThemeFamily::Fluent => paint_fluent_switch(ui, rect, t, response.hovered()),
+        }
         if response.has_focus() {
-            painter.rect_stroke(
+            ui.painter().rect_stroke(
                 rect.expand(2.0),
-                radius + 2.0,
-                Stroke::new(1.5, p.accent),
+                rect.height() / 2.0 + 2.0,
+                Stroke::new(1.5, Palette::of(ui).accent),
                 egui::StrokeKind::Outside,
             );
         }
     }
     response
+}
+
+fn paint_graphite_switch(ui: &Ui, rect: egui::Rect, t: f32) {
+    let p = Palette::of(ui);
+    let enabled = ui.is_enabled();
+    let track = if enabled {
+        p.control_track.lerp_to_gamma(p.accent, t)
+    } else {
+        p.control_track.gamma_multiply(0.5)
+    };
+    // Light text would do on a dark track, but text on a light track is near black:
+    // macOS keeps the knob light there.
+    let knob_off = if ui.visuals().dark_mode {
+        p.text
+    } else {
+        p.window_bg
+    };
+    let knob = if enabled {
+        knob_off.lerp_to_gamma(p.on_accent, t)
+    } else {
+        p.text_weak
+    };
+    let painter = ui.painter();
+    let radius = rect.height() / 2.0;
+    painter.rect_filled(rect, radius, track);
+    let knob_radius = radius - 2.0;
+    let inset = knob_radius + 2.0;
+    let x = egui::lerp((rect.left() + inset)..=(rect.right() - inset), t);
+    painter.circle_filled(egui::pos2(x, rect.center().y), knob_radius, knob);
+}
+
+fn paint_fluent_switch(ui: &Ui, rect: egui::Rect, t: f32, hovered: bool) {
+    let p = Palette::of(ui);
+    let enabled = ui.is_enabled();
+    let hovered = hovered && enabled;
+    let off_stroke = if enabled { p.text_weak } else { p.hint_text };
+    let accent = if enabled { p.accent } else { p.hint_text };
+    let off_fill = if hovered {
+        p.subtle_hover
+    } else {
+        Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    let radius = rect.height() / 2.0;
+    painter.rect(
+        rect,
+        radius,
+        off_fill.lerp_to_gamma(accent, t),
+        Stroke::new(1.0, off_stroke.lerp_to_gamma(accent, t)),
+        egui::StrokeKind::Inside,
+    );
+    let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
+    let knob_radius = if hovered { 7.0 } else { 6.0 };
+    let knob = off_stroke.lerp_to_gamma(p.on_accent, t);
+    painter.circle_filled(egui::pos2(x, rect.center().y), knob_radius, knob);
 }
 
 /// One group of settings: a heading and a full-width card whose rows are
@@ -242,7 +285,7 @@ pub fn settings_group<R>(
     let p = Palette::of(ui);
     let m = Metrics::of(ui);
     ui.add_space(14.0);
-    ui.label(RichText::new(title).strong().color(p.text_weak));
+    crate::containers::group_title(ui, title);
     ui.add_space(6.0);
     Frame::new()
         .fill(p.card_bg)
@@ -302,7 +345,7 @@ fn setting_row<R>(
     let width = ui.available_width();
     let top_left = ui.cursor().min;
     // The height of a row with no description.
-    let min_height = (Metrics::of(ui).control_height + 14.0).max(44.0);
+    let min_height = Metrics::of(ui).settings_row_height;
     // The control goes first, right-aligned, so the text can wrap in the space
     // it leaves.
     let control_area = egui::Rect::from_min_size(
@@ -403,12 +446,10 @@ pub fn key_caps(ui: &mut Ui, combinations: &[impl AsRef<str>]) {
 /// `Response::accessible_name` on what `ui.add` returns.
 pub fn text_field<'t>(ui: &Ui, text: &'t mut dyn egui::TextBuffer) -> TextEdit<'t> {
     let m = Metrics::of(ui);
-    // Fluent draws its field text closer to the edge than the other looks.
-    let margin_x = if m == Metrics::FLUENT { 4 } else { 8 };
     TextEdit::singleline(text)
         .min_size(Vec2::new(0.0, m.control_height))
         .align(Align2::LEFT_CENTER)
-        .margin(Margin::symmetric(margin_x, 2))
+        .margin(Margin::symmetric(m.text_field_margin, 2))
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +627,7 @@ mod tests {
     use egui_mev_theme::presets;
 
     use super::*;
+    use crate::test_support::{frame_output, painted_circles, themed_family};
 
     #[test]
     fn parses_full_and_shorthand_hex() {
@@ -643,6 +685,100 @@ mod tests {
         harness.get_by_label("Wi-Fi").click();
         harness.run();
         assert_eq!(*harness.state(), (true, 1));
+    }
+
+    #[test]
+    fn a_switch_has_the_size_of_its_family() {
+        for (family, size) in [
+            (ThemeFamily::Graphite, Vec2::new(32.0, 18.0)),
+            (ThemeFamily::Fluent, Vec2::new(40.0, 20.0)),
+        ] {
+            let ctx = themed_family(family, egui::Theme::Dark);
+            crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+                let mut on = false;
+                let switch = toggle_switch(ui, &mut on, "Switch");
+                assert_eq!(switch.rect.size(), size, "{family:?}");
+            });
+        }
+    }
+
+    #[test]
+    fn only_a_fluent_switch_reacts_to_hover() {
+        for (family, resting, hovered) in [
+            (ThemeFamily::Graphite, 7.0, 7.0),
+            (ThemeFamily::Fluent, 6.0, 7.0),
+        ] {
+            let ctx = themed_family(family, egui::Theme::Dark);
+            let knob = |events: Vec<egui::Event>| {
+                let output = frame_output(&ctx, 0.0, events, |ui| {
+                    let mut on = false;
+                    toggle_switch(ui, &mut on, "Switch");
+                });
+                painted_circles(&output)
+            };
+            assert_eq!(knob(Vec::new()), [resting], "{family:?}");
+            // The pointer arrives, then the next frame sees the hover.
+            let over = egui::Event::PointerMoved(egui::pos2(12.0, 12.0));
+            knob(vec![over]);
+            assert_eq!(knob(Vec::new()), [hovered], "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_light_graphite_switch_keeps_a_light_knob() {
+        let ctx = themed_family(ThemeFamily::Graphite, egui::Theme::Light);
+        let p = egui_mev_theme::Theme::of(&ctx).light;
+        let output = frame_output(&ctx, 0.0, Vec::new(), |ui| {
+            let mut on = false;
+            toggle_switch(ui, &mut on, "Switch");
+        });
+        let colors = crate::test_support::painted_colors(&output);
+        assert!(colors.contains(&p.window_bg));
+        assert!(!colors.contains(&p.text));
+    }
+
+    #[test]
+    fn a_settings_row_is_as_tall_as_the_metrics_say() {
+        for metrics in [Metrics::GRAPHITE, Metrics::DENSE, Metrics::FLUENT] {
+            let ctx = egui::Context::default();
+            egui_mev_theme::Theme::dark_only(presets::GRAPHITE_DARK)
+                .with_metrics(metrics)
+                .install(&ctx);
+            egui_mev_theme::fonts::install_test(&ctx, &egui_mev_theme::FontOptions::default());
+            crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |_| {});
+            crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+                let top = ui.cursor().top();
+                setting_row(ui, "Sounds", None, |_| {});
+                let height = ui.cursor().top() - top - ui.spacing().item_spacing.y;
+                assert_eq!(height, metrics.settings_row_height);
+            });
+        }
+    }
+
+    #[test]
+    fn text_fields_take_their_margin_from_the_metrics() {
+        let width = |text_field_margin: i8| {
+            let ctx = egui::Context::default();
+            egui_mev_theme::Theme::dark_only(presets::GRAPHITE_DARK)
+                .with_metrics(Metrics {
+                    text_field_margin,
+                    ..Metrics::GRAPHITE
+                })
+                .install(&ctx);
+            egui_mev_theme::fonts::install_test(&ctx, &egui_mev_theme::FontOptions::default());
+            crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |_| {});
+            let mut measured = 0.0;
+            crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+                let mut text = "mmmm".to_owned();
+                // A field as wide as its text, plus the margins.
+                let edit = text_field(ui, &mut text)
+                    .desired_width(0.0)
+                    .clip_text(false);
+                measured = ui.add(edit).rect.width();
+            });
+            measured
+        };
+        assert_eq!(width(20) - width(4), 32.0);
     }
 
     #[test]

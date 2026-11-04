@@ -5,7 +5,8 @@
 1. **Admission.** A crate or item needs two or more projects that have that code today and no app types, or a place on the list below. One project's code stays in that project until a second one wants it.
 2. **Features.**
    - The workspace has `egui` and `eframe` with no default features. Each crate lists the minimum it needs.
-   - No crate requires a renderer. Only `egui_mev_app`'s `eframe` feature pulls in `eframe`, and its `wgpu` feature picks that backend. The app chooses otherwise.
+   - No crate requires a renderer, except `egui_mev_host`, which is a window. Only `egui_mev_app`'s `eframe` feature pulls in `eframe`, and its `wgpu` feature picks that backend. The app chooses otherwise.
+   - OS calls in `egui_mev_theme` stay behind `native`, so a look can be rendered anywhere without them.
    - Optional integrations stay behind features, off by default.
 3. **No umbrella crate.** Projects depend on crates directly.
 4. **Configuration comes from the app.** Palette, fonts, IDs, app names and env var names are passed in.
@@ -21,9 +22,11 @@ These have one source project today, and were included on purpose on 2026-11-04:
 - `egui_mev_widgets`: `text_fit`, breadcrumb `fit`, `SearchPicker`
 - `egui_mev_data`: `FormState`, `TableView`
 - `egui_mev_graphics`: curve editor, color editor, rulers
+- `egui_mev_host`: raw winit window
 
 ## Parked
 
 - **Waiting on egui 0.37 support upstream:** dock style (`egui_dock`), Phosphor constants (`egui-phosphor`), puffin helpers (`puffin_egui`). Phosphor already works through `IconFont::Custom`.
+- **Out of scope for system themes:** vibrancy and native materials on macOS (no source has them), automatic accent-change detection (install `Theme::system()` again instead), Linux native looks (Linux gets Graphite), tray icons by OS theme.
 - **One consumer:** Lucide picker, `ViewTransform`, `TileCache`, panel-state repair, `RotatingLog`, `FailureRecord`.
 - **App-bound:** `chip_input`, `path_editor`, breadcrumb `show`, `JobScheduler`, `AssetManager`, multi-window docking, `TrayController`, pen input, pixel undo.

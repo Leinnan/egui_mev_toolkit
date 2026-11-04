@@ -9,7 +9,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::{
     Foundation::{ERROR_SUCCESS, HWND},
     Graphics::Dwm::{
-        DWMSBT_MAINWINDOW, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
+        DWMSBT_MAINWINDOW, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_TEXT_COLOR,
         DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
         DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
     },
@@ -19,7 +19,7 @@ use windows_sys::Win32::{
     UI::Controls::MARGINS,
 };
 
-use crate::fluent::AccentShades;
+use crate::{AccentShades, Palette};
 
 /// System backdrop drawn behind a window's client area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,14 +109,14 @@ pub fn system_accent() -> Option<AccentShades> {
 /// Applies Fluent window chrome to `window` for the given light/dark `theme`.
 ///
 /// Requests rounded corners, matches the title bar's dark mode to `theme`,
-/// and either enables the Mica backdrop or tints the caption with `caption`
-/// (the palette's `toolbar_bg`). Returns the backdrop actually applied: [`Backdrop::Solid`]
+/// and either enables the Mica backdrop or colours the caption from `palette`
+/// (its `toolbar_bg` and `text`), which must be opaque. Returns the backdrop actually applied: [`Backdrop::Solid`]
 /// when Mica was requested but the OS rejected it (before Windows 11 22H2).
 pub fn apply_window_chrome(
     window: &impl HasWindowHandle,
     backdrop: Backdrop,
     theme: Theme,
-    caption: Color32,
+    palette: &Palette,
 ) -> Backdrop {
     let Some(hwnd) = hwnd_of(window) else {
         return Backdrop::Solid;
@@ -133,33 +133,42 @@ pub fn apply_window_chrome(
     {
         return Backdrop::Mica;
     }
-    set_attribute(hwnd, DWMWA_CAPTION_COLOR, colorref(caption));
+    set_attribute(hwnd, DWMWA_CAPTION_COLOR, colorref(palette.toolbar_bg));
+    set_attribute(hwnd, DWMWA_TEXT_COLOR, colorref(palette.text));
     Backdrop::Solid
 }
 
-/// Tracks the theme last applied to a window's chrome so callers can
-/// re-apply it cheaply each frame when the system theme changes.
+/// Tracks what was last applied to a window's chrome so callers can re-apply it
+/// cheaply each frame. Keep one per window.
 #[derive(Debug, Default)]
 pub struct WindowChrome {
-    applied: Option<Theme>,
+    applied: Option<(isize, Theme)>,
     backdrop: Option<Backdrop>,
 }
 
 impl WindowChrome {
-    /// Applies the chrome when `theme` differs from the last applied one.
+    /// Applies the chrome when the window or `theme` differs from the last time.
+    ///
+    /// A handle that isn't available yet records nothing, so the next frame
+    /// retries. A backdrop the OS rejected stays rejected rather than being
+    /// requested again.
     pub fn sync(
         &mut self,
         window: &impl HasWindowHandle,
         backdrop: Backdrop,
         theme: Theme,
-        caption: Color32,
+        palette: &Palette,
     ) {
-        if self.applied == Some(theme) {
+        let Some(hwnd) = hwnd_of(window) else {
+            return;
+        };
+        let key = (hwnd as isize, theme);
+        if self.applied == Some(key) {
             return;
         }
         let requested = self.backdrop.unwrap_or(backdrop);
-        self.backdrop = Some(apply_window_chrome(window, requested, theme, caption));
-        self.applied = Some(theme);
+        self.backdrop = Some(apply_window_chrome(window, requested, theme, palette));
+        self.applied = Some(key);
     }
 
     /// The backdrop in effect after the last [`Self::sync`], if any.

@@ -23,8 +23,9 @@ pub fn window(
 }
 
 /// macOS: extend content under a transparent title bar, so the app's toolbar and
-/// the traffic-light buttons share one bar. Pair it with
-/// [`crate::handle_window_drag`] on the toolbar. Other systems are unaffected.
+/// the traffic-light buttons share one bar. Pair it with [`crate::title_bar`].
+/// Other systems are unaffected. This follows the platform, not the theme family,
+/// so Fluent simulated on a Mac gets the Mac's window.
 #[must_use]
 pub fn unified_titlebar(viewport: ViewportBuilder) -> ViewportBuilder {
     viewport

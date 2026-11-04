@@ -19,8 +19,8 @@ default_fonts = ["egui/default_fonts"]
 lucide = ["dep:lucide-icons"]
 # Bundles Roboto Condensed as `fonts::ROBOTO_CONDENSED`.
 roboto = []
-# Fluent (WinUI 3) palettes and style, plus Mica and window chrome on Windows.
-fluent = ["dep:raw-window-handle", "dep:windows-sys"]
+# Calls into the OS: the user's accent colour, plus window chrome on Windows.
+native = ["dep:objc2-app-kit", "dep:raw-window-handle", "dep:windows-sys"]
 serde = ["dep:serde"]
 
 [dependencies]
@@ -31,6 +31,9 @@ serde = { workspace = true, optional = true }
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = { version = "0.6", optional = true }
 windows-sys = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSColor", "NSColorSpace", "objc2-core-foundation"], optional = true }
 
 [dev-dependencies]
 egui = { workspace = true, features = ["default_fonts"] }

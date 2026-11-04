@@ -63,6 +63,25 @@ done
 forbid "egui_mev_app (default features)" "$renderer" "$(tree egui_mev_app --target all)"
 control "egui_mev_app with its wgpu feature" wgpu "$(tree egui_mev_app --features wgpu)"
 
+# Theme OS calls exist only behind `native`.
+for target in aarch64-apple-darwin x86_64-pc-windows-msvc; do
+    forbid "egui_mev_theme (default features, $target)" 'objc2-app-kit|windows-sys|raw-window-handle' \
+        "$(tree egui_mev_theme --target "$target")"
+done
+control "egui_mev_theme with native on macOS" objc2-app-kit \
+    "$(tree egui_mev_theme --features native --target aarch64-apple-darwin)"
+control "egui_mev_theme with native on Windows" windows-sys \
+    "$(tree egui_mev_theme --features native --target x86_64-pc-windows-msvc)"
+
+# Chrome links no renderer of its own.
+forbid "egui_mev_app (chrome)" "$renderer" "$(tree egui_mev_app --features chrome --target all)"
+
+# The host is raw winit and wgpu, and eframe would defeat its purpose. glow is
+# allowed: wgpu's gles backend uses it.
+forbid "egui_mev_host" 'eframe|glutin|egui_glow' "$(tree egui_mev_host --all-features --target all)"
+control egui_mev_host winit "$(tree egui_mev_host)"
+control egui_mev_host egui-wgpu "$(tree egui_mev_host)"
+
 # The native menu exists only on macOS: Linux must not pull in muda's GTK.
 linux="$(tree egui_mev_commands --all-features --target x86_64-unknown-linux-gnu)"
 forbid "egui_mev_commands (all features, Linux)" 'muda|gtk|arboard' "$linux"
@@ -72,7 +91,7 @@ forbid "egui_mev_commands (default features, macOS)" 'muda|arboard' \
     "$(tree egui_mev_commands --target aarch64-apple-darwin)"
 
 # No Bevy anywhere, except `bevy_reflect` in the inspector.
-for package in egui_mev_core egui_mev_theme egui_mev_widgets egui_mev_data egui_mev_graphics egui_mev_commands egui_mev_tasks egui_mev_app egui_mev_test egui_mev_icons_subset; do
+for package in egui_mev_core egui_mev_theme egui_mev_widgets egui_mev_data egui_mev_graphics egui_mev_commands egui_mev_tasks egui_mev_app egui_mev_host egui_mev_test egui_mev_icons_subset; do
     forbid "$package (all features)" "$any_bevy" "$(tree "$package" --all-features)"
 done
 inspect="$(tree egui_mev_inspect --all-features)"

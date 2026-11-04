@@ -1,0 +1,44 @@
+[package]
+name = "egui_mev_host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "A raw winit and wgpu window for egui, for apps with their own event loop and for Mica, neither of which eframe can do"
+
+[lib]
+doctest = false
+
+[dependencies]
+egui.workspace = true
+egui_mev_app = { path = "../egui_mev_app", features = ["mica"] }
+egui_mev_theme = { path = "../egui_mev_theme" }
+log = "0.4"
+pollster = "1"
+
+egui-winit = "0.37"
+winit = "0.30"
+# Without default features, which would compile in every backend; see the target
+# sections below. The major version of wgpu must be the one egui-wgpu 0.37 uses.
+egui-wgpu = { version = "0.37", default-features = false, features = ["winit", "wayland", "x11"] }
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+egui-wgpu = { version = "0.37", default-features = false, features = ["macos-window-resize-jitter-fix"] }
+wgpu = { version = "30.0", default-features = false, features = ["metal"] }
+
+# OpenGL is the fallback on Windows 7 and 8, which have no DirectX 12.
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30.0", default-features = false, features = ["dx12", "gles"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+wgpu = { version = "30.0", default-features = false, features = ["vulkan", "gles"] }
+
+[dev-dependencies]
+egui = { workspace = true, features = ["default_fonts"] }
+egui_mev_widgets = { path = "../egui_mev_widgets" }
+
+[lints]
+workspace = true

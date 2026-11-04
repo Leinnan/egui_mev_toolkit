@@ -1,5 +1,5 @@
-//! Snapshots of the palette, the help view and the menu bar in both Graphite looks. Rewrite them
-//! with `UPDATE_SNAPSHOTS=1`, and only after looking at the new images.
+//! Snapshots of the palette, the help view and the menu bar in the Graphite and Fluent looks.
+//! Rewrite them with `UPDATE_SNAPSHOTS=1`, and only after looking at the new images.
 
 use egui::{Key, Modifiers, Theme as Mode};
 use egui_kittest::{Harness, SnapshotResults, kittest::Queryable as _};
@@ -8,15 +8,30 @@ use egui_mev_commands::{
     PaletteItem, Sections, help_ui, menu_bar,
 };
 use egui_mev_test::{install, settle, snapshot_lock, snapshot_options};
-use egui_mev_theme::{Theme, presets};
+use egui_mev_theme::{AccentShades, Palette, Theme, fluent, presets};
 
-const LOOKS: [(&str, Mode); 2] = [
-    ("graphite_dark", Mode::Dark),
-    ("graphite_light", Mode::Light),
+fn graphite() -> Theme {
+    Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT)
+}
+
+fn windows() -> Theme {
+    fluent::theme(AccentShades::WINDOWS_DEFAULT)
+}
+
+type Look = (&'static str, fn() -> Theme, Mode);
+
+const LOOKS: [Look; 4] = [
+    ("graphite_dark", graphite, Mode::Dark),
+    ("graphite_light", graphite, Mode::Light),
+    ("fluent_dark", windows, Mode::Dark),
+    ("fluent_light", windows, Mode::Light),
 ];
 
-fn theme() -> Theme {
-    Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT)
+/// The harness only fills what its contents take up, and a modal takes up nothing.
+fn panel_background(ui: &egui::Ui) {
+    let background = Palette::of(ui).panel_bg;
+    ui.painter()
+        .rect_filled(ui.ctx().content_rect(), 0.0, background);
 }
 
 fn palette() -> CommandPalette<u32> {
@@ -30,13 +45,14 @@ fn palette() -> CommandPalette<u32> {
     ])
 }
 
-fn palette_harness(mode: Mode) -> Harness<'static, CommandPalette<u32>> {
+fn palette_harness(theme: fn() -> Theme, mode: Mode) -> Harness<'static, CommandPalette<u32>> {
     Harness::builder()
-        .with_size([520.0, 340.0])
+        .with_size([520.0, 420.0])
         .with_theme(mode)
-        .with_context_setup(|ctx| install(ctx, theme()))
+        .with_context_setup(move |ctx| install(ctx, theme()))
         .build_ui_state(
             |ui, palette: &mut CommandPalette<u32>| {
+                panel_background(ui);
                 palette.show(ui.ctx());
             },
             palette(),
@@ -48,15 +64,15 @@ fn palette_snapshots() {
     let _guard = snapshot_lock();
     let options = snapshot_options();
     let mut results = SnapshotResults::new();
-    for (name, mode) in LOOKS {
-        let mut harness = palette_harness(mode);
+    for (name, theme, mode) in LOOKS {
+        let mut harness = palette_harness(theme, mode);
         settle(&mut harness);
         harness.key_press(Key::ArrowDown);
         settle(&mut harness);
         results.add(harness.try_snapshot_options(format!("palette_{name}"), &options));
 
         // A search, with a selection on the second best match.
-        let mut harness = palette_harness(mode);
+        let mut harness = palette_harness(theme, mode);
         settle(&mut harness);
         harness.event(egui::Event::Text("opn".to_owned()));
         settle(&mut harness);
@@ -106,13 +122,14 @@ fn help_snapshots() {
     let _guard = snapshot_lock();
     let options = snapshot_options();
     let mut results = SnapshotResults::new();
-    for (name, mode) in LOOKS {
+    for (name, theme, mode) in LOOKS {
         let keymap = keymap();
         let mut harness = Harness::builder()
-            .with_size([640.0, 640.0])
+            .with_size([640.0, 700.0])
             .with_theme(mode)
-            .with_context_setup(|ctx| install(ctx, theme()))
+            .with_context_setup(move |ctx| install(ctx, theme()))
             .build_ui(move |ui| {
+                panel_background(ui);
                 let sections = [
                     HelpSection::from_keymap(ui.ctx(), "Application", &keymap, label),
                     HelpSection::from_keys(
@@ -148,7 +165,7 @@ fn menu_bar_snapshots() {
     let _guard = snapshot_lock();
     let options = snapshot_options();
     let mut results = SnapshotResults::new();
-    for (name, mode) in LOOKS {
+    for (name, theme, mode) in LOOKS {
         let menus = vec![
             Menu::new(
                 "View",
@@ -172,10 +189,13 @@ fn menu_bar_snapshots() {
             ),
         ];
         let mut harness = Harness::builder()
-            .with_size([360.0, 260.0])
+            .with_size([360.0, 360.0])
             .with_theme(mode)
-            .with_context_setup(|ctx| install(ctx, theme()))
-            .build_ui(move |ui| menu_bar(ui, &menus, &Checked, &Sections::new()));
+            .with_context_setup(move |ctx| install(ctx, theme()))
+            .build_ui(move |ui| {
+                panel_background(ui);
+                menu_bar(ui, &menus, &Checked, &Sections::new());
+            });
         settle(&mut harness);
         harness.get_by_label("View").click();
         settle(&mut harness);

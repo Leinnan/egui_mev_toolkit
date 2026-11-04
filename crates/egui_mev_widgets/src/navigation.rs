@@ -2,11 +2,11 @@
 //! tree rows, search fields and split buttons.
 
 use egui::{
-    Align2, AsIdSalt, Button, Color32, CornerRadius, FontId, Frame, Margin, Popup, Pos2, Rect,
-    Response, RichText, Role, Sense, Stroke, StrokeKind, TextEdit, TextFormat, TextStyle, Ui, Vec2,
-    WidgetInfo, pos2, text::LayoutJob,
+    Align2, AsIdSalt, Button, Color32, CornerRadius, FontId, Frame, Margin, Painter, Popup, Pos2,
+    Rect, Response, RichText, Role, Sense, Stroke, StrokeKind, TextEdit, TextFormat, TextStyle, Ui,
+    Vec2, WidgetInfo, pos2, text::LayoutJob,
 };
-use egui_mev_theme::{Glyph, Metrics, Palette};
+use egui_mev_theme::{Glyph, Metrics, Palette, ThemeFamily};
 
 use crate::buttons::{ButtonLook, painted_button};
 use crate::marks::{self, Chevron};
@@ -18,17 +18,44 @@ use crate::marks::{self, Chevron};
 /// Horizontal text padding inside each segment (px).
 const SEGMENT_PAD_X: f32 = 12.0;
 
-/// Minimum segment width (px).
+/// Minimum segment width in the macOS control (px).
 const SEGMENT_MIN_WIDTH: f32 = 44.0;
 
-fn segment_height(ui: &Ui) -> f32 {
-    Metrics::of(ui).interact_height.max(24.0)
+/// Height of the macOS control, a regular-size `NSSegmentedControl` (px).
+const SEGMENT_HEIGHT: f32 = 24.0;
+
+/// Height of a `WinUI` `SelectorBar` item (px).
+const SELECTOR_HEIGHT: f32 = 32.0;
+
+/// Gap between `SelectorBar` items (px).
+const SELECTOR_GAP: f32 = 4.0;
+
+/// Size of the pill under the selected `SelectorBar` item (px).
+const SELECTOR_PILL: Vec2 = Vec2::new(16.0, 3.0);
+
+fn segment_font(family: ThemeFamily) -> FontId {
+    FontId::proportional(match family {
+        ThemeFamily::Graphite => 12.0,
+        ThemeFamily::Fluent => 14.0,
+    })
+}
+
+const fn segment_gap(family: ThemeFamily) -> f32 {
+    match family {
+        ThemeFamily::Graphite => 0.0,
+        ThemeFamily::Fluent => SELECTOR_GAP,
+    }
 }
 
 /// Measure each segment's width for `labels`.
 fn segment_widths(ui: &Ui, labels: &[impl AsRef<str>]) -> Vec<f32> {
-    let font = FontId::proportional(Metrics::of(ui).caption);
+    let family = ThemeFamily::of(ui);
+    let font = segment_font(family);
     let color = Palette::of(ui).text;
+    let min_width = match family {
+        ThemeFamily::Graphite => SEGMENT_MIN_WIDTH,
+        ThemeFamily::Fluent => 0.0,
+    };
     labels
         .iter()
         .map(|label| {
@@ -36,18 +63,26 @@ fn segment_widths(ui: &Ui, labels: &[impl AsRef<str>]) -> Vec<f32> {
                 .fonts_mut(|f| f.layout_no_wrap(label.as_ref().to_owned(), font.clone(), color))
                 .size()
                 .x;
-            (text_w + SEGMENT_PAD_X * 2.0).max(SEGMENT_MIN_WIDTH).ceil()
+            (text_w + SEGMENT_PAD_X * 2.0).max(min_width).ceil()
         })
         .collect()
+}
+
+/// Total width (px) of `widths` with the gaps of `family` between them.
+fn segments_total(widths: &[f32], family: ThemeFamily) -> f32 {
+    let gaps = widths.len().saturating_sub(1) as f32;
+    widths.iter().sum::<f32>() + segment_gap(family) * gaps
 }
 
 /// Total width (px) a [`segmented_control`] with `labels` will occupy.
 #[must_use]
 pub fn segmented_width(ui: &Ui, labels: &[impl AsRef<str>]) -> f32 {
-    segment_widths(ui, labels).iter().sum()
+    segments_total(&segment_widths(ui, labels), ThemeFamily::of(ui))
 }
 
-/// macOS-style row of segments inside one rounded container. `selected` is the
+/// A row of mutually exclusive segments: one rounded container with an inset
+/// selected segment like macOS (Graphite), or a `WinUI` `SelectorBar` of separate
+/// items with an accent pill under the selected one (Fluent). `selected` is the
 /// index of the highlighted segment. Returns one [`Response`] per segment so
 /// callers can handle clicks, context menus and tooltips individually.
 pub fn segmented_control(
@@ -58,22 +93,26 @@ pub fn segmented_control(
 ) -> Vec<Response> {
     let p = Palette::of(ui);
     let m = Metrics::of(ui);
-    let height = segment_height(ui);
-    let font = FontId::proportional(m.caption);
+    let family = ThemeFamily::of(ui);
+    let height = match family {
+        ThemeFamily::Graphite => SEGMENT_HEIGHT,
+        ThemeFamily::Fluent => SELECTOR_HEIGHT,
+    };
+    let font = segment_font(family);
     let widths = segment_widths(ui, labels);
-    let total_w: f32 = widths.iter().sum();
+    let total_w = segments_total(&widths, family);
     let (outer, _) = ui.allocate_exact_size(Vec2::new(total_w, height), Sense::hover());
 
     let painter = ui.painter().clone();
-    let rounding = CornerRadius::same(m.control_radius);
-    let inner_rounding = CornerRadius::same(m.control_radius.saturating_sub(2));
-    painter.rect(
-        outer,
-        rounding,
-        p.card_bg,
-        Stroke::new(1.0, p.border),
-        StrokeKind::Inside,
-    );
+    if family == ThemeFamily::Graphite {
+        painter.rect(
+            outer,
+            CornerRadius::same(m.control_radius),
+            p.card_bg,
+            Stroke::new(1.0, p.border),
+            StrokeKind::Inside,
+        );
+    }
 
     let base_id = ui.make_persistent_id(id_salt);
     let mut responses = Vec::with_capacity(labels.len());
@@ -84,21 +123,16 @@ pub fn segmented_control(
         let response = ui.interact(rect, base_id.with(ix), Sense::click());
         let is_selected = selected == Some(ix);
         response.widget_info(|| WidgetInfo::selected(Role::Button, true, is_selected, label));
-        if is_selected {
-            painter.rect_filled(rect.shrink(2.0), inner_rounding, p.selection_bg);
-        } else if response.hovered() {
-            painter.rect_filled(rect.shrink(2.0), inner_rounding, p.card_bg_hover);
-        }
-        // Hairline separator between two unselected neighbours.
-        let next_selected = selected == Some(ix + 1);
-        if ix + 1 < labels.len() && !is_selected && !next_selected {
-            painter.line_segment(
-                [
-                    pos2(rect.max.x, rect.min.y + 5.0),
-                    pos2(rect.max.x, rect.max.y - 5.0),
-                ],
-                Stroke::new(1.0, p.border),
-            );
+        match family {
+            ThemeFamily::Graphite => {
+                let last = ix + 1 == labels.len();
+                let next_selected = selected == Some(ix + 1);
+                let separator = !last && !is_selected && !next_selected;
+                paint_inset_segment(&painter, &p, &m, rect, &response, is_selected, separator);
+            }
+            ThemeFamily::Fluent => {
+                paint_selector_item(&painter, &p, &m, rect, &response, is_selected)
+            }
         }
         painter.text(
             rect.center(),
@@ -108,9 +142,58 @@ pub fn segmented_control(
             if is_selected { p.text } else { p.text_weak },
         );
         responses.push(response);
-        x += width;
+        x += width + segment_gap(family);
     }
     responses
+}
+
+/// One segment inside the macOS container: an inset fill, and a hairline before
+/// the next segment when neither of the two is selected.
+fn paint_inset_segment(
+    painter: &Painter,
+    p: &Palette,
+    m: &Metrics,
+    rect: Rect,
+    response: &Response,
+    selected: bool,
+    separator: bool,
+) {
+    let inner_rounding = CornerRadius::same(m.control_radius.saturating_sub(2));
+    if selected {
+        painter.rect_filled(rect.shrink(2.0), inner_rounding, p.selection_bg);
+    } else if response.hovered() {
+        painter.rect_filled(rect.shrink(2.0), inner_rounding, p.card_bg_hover);
+    }
+    if separator {
+        painter.line_segment(
+            [
+                pos2(rect.max.x, rect.min.y + 5.0),
+                pos2(rect.max.x, rect.max.y - 5.0),
+            ],
+            Stroke::new(1.0, p.border),
+        );
+    }
+}
+
+/// One `SelectorBar` item: a subtle hover fill and an accent pill when selected.
+fn paint_selector_item(
+    painter: &Painter,
+    p: &Palette,
+    m: &Metrics,
+    rect: Rect,
+    response: &Response,
+    selected: bool,
+) {
+    if response.hovered() {
+        painter.rect_filled(rect, CornerRadius::same(m.control_radius), p.subtle_hover);
+    }
+    if selected {
+        let pill = Rect::from_center_size(
+            pos2(rect.center().x, rect.bottom() - SELECTOR_PILL.y / 2.0),
+            SELECTOR_PILL,
+        );
+        painter.rect_filled(pill, CornerRadius::same(2), p.accent);
+    }
 }
 
 /// [`segmented_control`] over a short static set of mutually exclusive options.
@@ -197,8 +280,15 @@ pub fn tab(ui: &mut Ui, selected: bool, label: &str) -> Response {
 // Navigation rows
 // ---------------------------------------------------------------------------
 
+/// Size of the Fluent selection pill at a selected row's edge (px).
+const NAV_PILL: Vec2 = Vec2::new(3.0, 16.0);
+
+/// Width reserved for a navigation row's icon (px).
+const NAV_ICON_WIDTH: f32 = 22.0;
+
 /// A sidebar row: icon and one line of text, with hover, selection and focus
-/// states.
+/// states. Graphite draws a macOS source-list row with a tinted selection; Fluent
+/// draws a `NavigationViewItem` with a neutral fill and an accent pill at its edge.
 pub fn nav_row(
     ui: &mut Ui,
     icon: impl Into<Glyph>,
@@ -208,22 +298,27 @@ pub fn nav_row(
 ) -> Response {
     let p = Palette::of(ui);
     let m = Metrics::of(ui);
+    let family = ThemeFamily::of(ui);
     let icon = icon.into();
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), m.nav_row_height), sense);
     response.widget_info(|| WidgetInfo::selected(Role::Button, true, selected, label));
     let radius = CornerRadius::same(m.control_radius);
-    if selected {
-        ui.painter().rect_filled(rect, radius, p.subtle_selected);
-    } else if response.hovered() || response.has_focus() {
-        ui.painter().rect_filled(rect, radius, p.subtle_hover);
+    let active = response.hovered() || response.has_focus();
+    let fill = match family {
+        ThemeFamily::Graphite if selected => Some(p.selection_bg),
+        ThemeFamily::Graphite => active.then_some(p.card_bg_hover),
+        ThemeFamily::Fluent if active => Some(p.subtle_hover),
+        ThemeFamily::Fluent => selected.then_some(p.subtle_selected),
+    };
+    if let Some(fill) = fill {
+        ui.painter().rect_filled(rect, radius, fill);
     }
-    // Fluent marks the selected row with a pill at its edge.
-    if selected && m == Metrics::FLUENT {
+    if selected && family == ThemeFamily::Fluent {
         ui.painter().rect_filled(
             Rect::from_center_size(
-                pos2(rect.left() + 3.0, rect.center().y),
-                Vec2::new(3.0, 16.0),
+                pos2(rect.left() + NAV_PILL.x / 2.0, rect.center().y),
+                NAV_PILL,
             ),
             2,
             p.accent,
@@ -233,26 +328,36 @@ pub fn nav_row(
         ui.painter()
             .rect_stroke(rect, radius, Stroke::new(1.0, p.accent), StrokeKind::Inside);
     }
+    let (icon_color, title_color) = match family {
+        ThemeFamily::Graphite if selected => (p.text, p.text),
+        ThemeFamily::Graphite => (p.text_weak, p.text_label),
+        ThemeFamily::Fluent => (p.text, p.text),
+    };
+    let (icon_size, icon_x) = match family {
+        ThemeFamily::Graphite => (14.0, 4.0),
+        ThemeFamily::Fluent => (16.0, 12.0),
+    };
     ui.painter().text(
-        rect.left_center() + Vec2::new(16.0, 0.0),
+        rect.left_center() + Vec2::new(icon_x + NAV_ICON_WIDTH / 2.0, 0.0),
         Align2::CENTER_CENTER,
         icon.ch,
-        icon.font_id(14.0),
-        p.text_weak,
+        icon.font_id(icon_size),
+        icon_color,
     );
+    let text_x = icon_x * 2.0 + NAV_ICON_WIDTH;
     let mut job = LayoutJob::simple_singleline(
         label.to_owned(),
         TextStyle::Body.resolve(ui.style()),
-        p.text,
+        title_color,
     );
-    job.wrap.max_width = (rect.width() - 42.0).max(0.0);
+    job.wrap.max_width = (rect.width() - text_x - 10.0).max(0.0);
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
     ui.painter().galley(
-        rect.left_center() + Vec2::new(32.0, -galley.size().y / 2.0),
+        rect.left_center() + Vec2::new(text_x, -galley.size().y / 2.0),
         galley,
-        p.text,
+        title_color,
     );
     response
 }
@@ -483,6 +588,8 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str) -> Response {
                         TextEdit::singleline(text)
                             .hint_text(hint)
                             .frame(Frame::NONE)
+                            .min_size(Vec2::new(0.0, height))
+                            .align(Align2::LEFT_CENTER)
                             .desired_width(width.max(20.0)),
                     )
                     .accessible_name(hint);
@@ -579,6 +686,72 @@ mod tests {
             assert!(widths[1] > SEGMENT_MIN_WIDTH);
             assert_eq!(segmented_width(ui, &labels), widths[0] + widths[1]);
         });
+    }
+
+    #[test]
+    fn the_segmented_control_has_each_familys_shape() {
+        for (family, height, gap) in [
+            (ThemeFamily::Graphite, SEGMENT_HEIGHT, 0.0),
+            (ThemeFamily::Fluent, SELECTOR_HEIGHT, SELECTOR_GAP),
+        ] {
+            let ctx = crate::test_support::themed_family(family, egui::Theme::Dark);
+            crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+                let labels = ["Assets", "Faces", "World"];
+                let total = segmented_width(ui, &labels);
+                let responses = segmented_control(ui, "s", &labels, Some(1));
+                assert_eq!(responses.len(), 3);
+                assert_eq!(responses[0].rect.height(), height, "{family:?}");
+                assert_eq!(
+                    responses[1].rect.left() - responses[0].rect.right(),
+                    gap,
+                    "{family:?}"
+                );
+                let span = responses[2].rect.right() - responses[0].rect.left();
+                assert_eq!(span, total, "{family:?}");
+            });
+        }
+    }
+
+    #[test]
+    fn only_the_macos_control_has_a_container_and_only_fluent_a_pill() {
+        for (family, container, pill) in [
+            (ThemeFamily::Graphite, true, false),
+            (ThemeFamily::Fluent, false, true),
+        ] {
+            let ctx = crate::test_support::themed_family(family, egui::Theme::Dark);
+            let p = egui_mev_theme::Theme::of(&ctx).dark;
+            let output = crate::test_support::frame_output(&ctx, 0.0, Vec::new(), |ui| {
+                segmented_control(ui, "s", &["Assets", "Faces", "World"], Some(1));
+            });
+            let rects = crate::test_support::painted_rects(&output);
+            let has_container = rects.iter().any(|(_, fill)| *fill == p.card_bg);
+            let has_pill = rects
+                .iter()
+                .any(|(rect, fill)| *fill == p.accent && rect.size() == SELECTOR_PILL);
+            assert_eq!(has_container, container, "{family:?}");
+            assert_eq!(has_pill, pill, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn segmented_reports_clicks_in_both_families() {
+        for family in [ThemeFamily::Graphite, ThemeFamily::Fluent] {
+            let mut harness = Harness::builder()
+                .with_size([400.0, 80.0])
+                .with_context_setup(move |ctx| {
+                    egui_mev_test::install(ctx, crate::test_support::family_theme(family));
+                })
+                .build_ui_state(
+                    |ui, current: &mut u8| {
+                        segmented(ui, "lod", current, &[(0, "Low"), (1, "High")]);
+                    },
+                    0,
+                );
+            harness.run();
+            harness.get_by_label("High").click();
+            harness.run();
+            assert_eq!(*harness.state(), 1, "{family:?}");
+        }
     }
 
     #[test]
@@ -701,5 +874,69 @@ mod tests {
         harness.get_by_label("Home").click();
         harness.run();
         assert_eq!(*harness.state(), 1);
+    }
+
+    /// Rects of accent fill a selected navigation row paints in `ctx`'s look.
+    fn nav_pills(ctx: &egui::Context, selected: bool) -> Vec<Rect> {
+        let accent = egui_mev_theme::Theme::of(ctx).dark.accent;
+        let output = crate::test_support::frame_output(ctx, 0.0, Vec::new(), |ui| {
+            nav_row(ui, 'h', "Home", selected, Sense::click());
+        });
+        crate::test_support::painted_rects(&output)
+            .into_iter()
+            .filter(|(_, fill)| *fill == accent)
+            .map(|(rect, _)| rect)
+            .collect()
+    }
+
+    #[test]
+    fn only_a_selected_fluent_nav_row_has_a_pill() {
+        let graphite = crate::test_support::themed_family(ThemeFamily::Graphite, egui::Theme::Dark);
+        assert!(nav_pills(&graphite, true).is_empty());
+        let fluent = crate::test_support::themed_family(ThemeFamily::Fluent, egui::Theme::Dark);
+        assert!(nav_pills(&fluent, false).is_empty());
+        let pills = nav_pills(&fluent, true);
+        assert_eq!(pills.len(), 1);
+        assert_eq!(pills[0].size(), NAV_PILL);
+    }
+
+    #[test]
+    fn a_fluent_theme_with_custom_metrics_keeps_fluent_drawing() {
+        let ctx = egui::Context::default();
+        egui_mev_theme::fluent::theme(egui_mev_theme::AccentShades::WINDOWS_DEFAULT)
+            .with_metrics(Metrics {
+                card_radius: 9,
+                nav_row_height: 40.0,
+                ..Metrics::FLUENT
+            })
+            .install(&ctx);
+        egui_mev_theme::fonts::install_test(&ctx, &egui_mev_theme::FontOptions::default());
+        ctx.set_theme(egui::Theme::Dark);
+        crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |_| {});
+        assert_eq!(nav_pills(&ctx, true).len(), 1);
+        crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+            let responses = segmented_control(ui, "s", &["One", "Two"], Some(0));
+            assert_eq!(responses[0].rect.height(), SELECTOR_HEIGHT);
+            let mut on = true;
+            let switch = crate::forms::toggle_switch(ui, &mut on, "Switch");
+            assert_eq!(switch.rect.size(), Vec2::new(40.0, 20.0));
+        });
+    }
+
+    #[test]
+    fn nav_row_colours_follow_the_family() {
+        for family in [ThemeFamily::Graphite, ThemeFamily::Fluent] {
+            let ctx = crate::test_support::themed_family(family, egui::Theme::Dark);
+            let p = egui_mev_theme::Theme::of(&ctx).dark;
+            let fill = match family {
+                ThemeFamily::Graphite => p.selection_bg,
+                ThemeFamily::Fluent => p.subtle_selected,
+            };
+            let output = crate::test_support::frame_output(&ctx, 0.0, Vec::new(), |ui| {
+                nav_row(ui, 'h', "Home", true, Sense::click());
+            });
+            let colors = crate::test_support::painted_colors(&output);
+            assert!(colors.contains(&fill), "{family:?}");
+        }
     }
 }

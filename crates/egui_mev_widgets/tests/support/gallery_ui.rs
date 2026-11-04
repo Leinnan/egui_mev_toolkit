@@ -1,7 +1,7 @@
 //! Every widget on one page, shared by `examples/gallery.rs` and `tests/gallery.rs`.
 
-use egui::{RichText, ScrollArea, Sense, Ui, Vec2};
-use egui_mev_theme::{Metrics, Palette};
+use egui::{Color32, RichText, ScrollArea, Sense, Ui, Vec2};
+use egui_mev_theme::{AccentShades, Glyph, Metrics, Palette, Theme, fluent, presets};
 #[cfg(feature = "autocomplete")]
 use egui_mev_widgets::autocomplete::{AutoCompleteTextEdit, complete_from_list};
 #[cfg(feature = "picker")]
@@ -9,14 +9,90 @@ use egui_mev_widgets::picker::{PickerCategory, PickerItem, PickerMemory, SearchP
 use egui_mev_widgets::{
     BannerKind, DialogButton, DialogResult, Tip, ToastKind, Toasts, TreeRow, TreeRowTrailing,
     banner, card, collapsible, color_swatch_row, danger_button, destructive_button, dialog_buttons,
-    empty_state, field_row, fit, grouped_form, inspector_section, key_caps, kv_row, kv_row_colored,
-    kv_row_mono, nav_row, painted_button, pill, primary_button, progress, search_field,
-    secondary_button, section_header, segmented, settings_group, sheet, slider_row,
-    slider_row_suffix, small_icon_button, small_text_button, split_button, tab_strip, text_field,
-    text_fit, toggle_row, toggle_switch, tool_button, toolbar_icon, toolbar_icon_enabled, tree_row,
-    ui_labeled_row,
+    empty_state, field_row, fit, group_title, grouped_form, inspector_section, key_caps, kv_row,
+    kv_row_colored, kv_row_mono, nav_row, page_heading, painted_button, pill, primary_button,
+    progress, search_field, secondary_button, section_header, segmented, settings_group, sheet,
+    slider_row, slider_row_suffix, small_icon_button, small_text_button, split_button, tab_strip,
+    text_field, text_fit, toggle_row, toggle_switch, tool_button, toolbar_icon,
+    toolbar_icon_enabled, tree_row, ui_labeled_row,
 };
 use lucide_icons::Icon;
+
+/// A look the gallery can be shown in. The example switches between them and the
+/// snapshots cover each one, always with a fixed accent so that nothing depends on
+/// the machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Look {
+    GraphiteDark,
+    MacosLight,
+    GraphiteLight,
+    SlateDark,
+    FluentDark,
+    FluentLight,
+    PinkDark,
+}
+
+// Each of the two users of this file calls only some of these.
+#[allow(dead_code)]
+impl Look {
+    pub const ALL: [Self; 7] = [
+        Self::GraphiteDark,
+        Self::MacosLight,
+        Self::GraphiteLight,
+        Self::SlateDark,
+        Self::FluentDark,
+        Self::FluentLight,
+        Self::PinkDark,
+    ];
+
+    /// The look's name in a snapshot's file name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::GraphiteDark => "graphite_dark",
+            Self::MacosLight => "macos_light",
+            Self::GraphiteLight => "graphite_light",
+            Self::SlateDark => "slate_dark",
+            Self::FluentDark => "fluent_dark",
+            Self::FluentLight => "fluent_light",
+            Self::PinkDark => "pink_dark",
+        }
+    }
+
+    /// The look's name on the theme switcher.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GraphiteDark => "Graphite dark",
+            Self::MacosLight => "macOS light",
+            Self::GraphiteLight => "Graphite light",
+            Self::SlateDark => "Slate dark",
+            Self::FluentDark => "Fluent dark",
+            Self::FluentLight => "Fluent light",
+            Self::PinkDark => "Pink accent",
+        }
+    }
+
+    pub fn theme(self) -> Theme {
+        match self {
+            Self::GraphiteDark | Self::MacosLight => Theme::graphite(AccentShades::MACOS_DEFAULT),
+            Self::GraphiteLight => Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT),
+            Self::SlateDark => Theme::dark_only(presets::SLATE_DARK),
+            Self::FluentDark | Self::FluentLight => fluent::theme(AccentShades::WINDOWS_DEFAULT),
+            Self::PinkDark => {
+                let pink = Color32::from_rgb(0xF7, 0x4F, 0x9E);
+                Theme::graphite(AccentShades::from_base(pink))
+            }
+        }
+    }
+
+    pub const fn mode(self) -> egui::Theme {
+        match self {
+            Self::MacosLight | Self::GraphiteLight | Self::FluentLight => egui::Theme::Light,
+            Self::GraphiteDark | Self::SlateDark | Self::FluentDark | Self::PinkDark => {
+                egui::Theme::Dark
+            }
+        }
+    }
+}
 
 /// Which dialog the gallery shows over itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,6 +185,7 @@ pub fn gallery_ui(ui: &mut Ui, state: &mut GalleryState) {
 }
 
 fn buttons_column(ui: &mut Ui, state: &mut GalleryState) {
+    page_heading(ui, "Page heading", "A page title and its description.");
     card(ui, Some("Buttons"), |ui| {
         ui.horizontal_wrapped(|ui| {
             primary_button(ui, "Save");
@@ -118,13 +195,15 @@ fn buttons_column(ui: &mut Ui, state: &mut GalleryState) {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if toolbar_icon(ui, Icon::Grid3x3, state.grid, Tip::hint("Grid", "G")).clicked() {
+            let glyph = |ui: &Ui, icon| Glyph::themed(ui.ctx(), icon);
+            let grid = glyph(ui, Icon::Grid3x3);
+            if toolbar_icon(ui, grid, state.grid, Tip::hint("Grid", "G")).clicked() {
                 state.grid = !state.grid;
             }
-            toolbar_icon(ui, Icon::FolderOpen, false, "Open");
-            toolbar_icon_enabled(ui, Icon::Undo2, true, "Undo");
-            toolbar_icon_enabled(ui, Icon::Redo2, false, "Redo");
-            small_icon_button(ui, Icon::X, 12.0, true, "Close");
+            toolbar_icon(ui, glyph(ui, Icon::FolderOpen), false, "Open");
+            toolbar_icon_enabled(ui, glyph(ui, Icon::Undo2), true, "Undo");
+            toolbar_icon_enabled(ui, glyph(ui, Icon::Redo2), false, "Redo");
+            small_icon_button(ui, glyph(ui, Icon::X), 12.0, true, "Close");
             small_text_button(ui, "B/W", "Black and white");
             let dots = painted_button(
                 ui,
@@ -168,7 +247,11 @@ fn buttons_column(ui: &mut Ui, state: &mut GalleryState) {
             pill(ui, "Idle", p.neutral);
         });
         ui.add_space(4.0);
-        banner(ui, BannerKind::Info, "Flora is approximate.");
+        banner(
+            ui,
+            BannerKind::Info,
+            "Flora is approximate, so check how it looks before you export the scene to the game.",
+        );
         ui.add_space(4.0);
         banner(ui, BannerKind::Success, "The key is valid for this skin.");
         ui.add_space(4.0);
@@ -375,6 +458,7 @@ fn navigation_column(ui: &mut Ui, state: &mut GalleryState) {
     });
     card(ui, Some("Sections"), |ui| {
         section_header(ui, "Section header");
+        group_title(ui, "Group title");
         inspector_section(ui, "Inspector section", false, |ui| {
             ui.label("Open by default.");
         });

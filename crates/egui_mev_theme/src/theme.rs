@@ -2,10 +2,47 @@ use std::sync::Arc;
 
 use egui::{Color32, Context, CornerRadius, FontId, Margin, Shadow, Stroke, Style, TextStyle};
 
-use crate::{Metrics, Palette, presets};
+use crate::{AccentShades, FontOptions, Metrics, Palette, fonts, presets};
 
 /// How a theme turns its colours and sizes into an egui [`Style`].
 pub type StyleFn = fn(&Style, egui::Theme, &Palette, &Metrics) -> Style;
+
+/// A family of looks. It says how widgets draw, not which OS runs them, so every
+/// family works everywhere: an app can offer it as a setting, and tests can
+/// render any family on any machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ThemeFamily {
+    /// macOS-style: compact sizes, filled controls and tinted selection.
+    #[default]
+    Graphite,
+    /// Windows 11 style (WinUI 3): larger controls, outlined switches, accent pills.
+    Fluent,
+}
+
+impl ThemeFamily {
+    /// The family native to the OS this was built for. Linux gets Graphite.
+    #[must_use]
+    pub const fn platform_default() -> Self {
+        if cfg!(windows) {
+            Self::Fluent
+        } else {
+            Self::Graphite
+        }
+    }
+
+    /// The family of the theme installed on the context `ui` belongs to.
+    #[must_use]
+    pub fn of(ui: &egui::Ui) -> Self {
+        Self::of_ctx(ui.ctx())
+    }
+
+    /// The family of the theme installed on `ctx`.
+    #[must_use]
+    pub fn of_ctx(ctx: &Context) -> Self {
+        Theme::of(ctx).family
+    }
+}
 
 /// A complete look for one egui context.
 #[derive(Clone, Debug)]
@@ -20,6 +57,8 @@ pub struct Theme {
     pub style: StyleFn,
     /// Draw dark whatever the system asks for.
     pub dark_only: bool,
+    /// How widgets draw. Set this by hand only with a matching style and metrics.
+    pub family: ThemeFamily,
 }
 
 impl Default for Theme {
@@ -38,7 +77,32 @@ impl Theme {
             metrics: Metrics::GRAPHITE,
             style: standard_style,
             dark_only: false,
+            family: ThemeFamily::Graphite,
         }
+    }
+
+    /// The look of the OS this runs on, around the user's accent colour where
+    /// the `native` feature can read it: macOS-style or Windows-style, following
+    /// the system's light or dark setting. Install it again to pick up a changed
+    /// accent; a change of light or dark needs nothing, since both are styled.
+    #[must_use]
+    pub fn system() -> Self {
+        Self::for_family(ThemeFamily::platform_default(), AccentShades::system())
+    }
+
+    /// The look of `family` around `accent`, on any OS.
+    #[must_use]
+    pub fn for_family(family: ThemeFamily, accent: AccentShades) -> Self {
+        match family {
+            ThemeFamily::Graphite => Self::graphite(accent),
+            ThemeFamily::Fluent => crate::fluent::theme(accent),
+        }
+    }
+
+    /// The macOS-style look around `accent`, on any OS.
+    #[must_use]
+    pub fn graphite(accent: AccentShades) -> Self {
+        Self::new(presets::macos_dark(accent), presets::macos_light(accent))
     }
 
     /// One dark palette, whatever the system asks for.
@@ -47,6 +111,29 @@ impl Theme {
         Self {
             dark_only: true,
             ..Self::new(palette, palette)
+        }
+    }
+
+    /// Install this theme and the platform's fonts together, with fonts first so
+    /// the theme's headings can use them. For snapshot tests, use
+    /// [`fonts::install_test`] and [`Self::install`] instead, so the result
+    /// doesn't depend on the machine.
+    pub fn install_with_fonts(self, ctx: &Context, options: &FontOptions) {
+        let semibold_headings = self.family == ThemeFamily::Fluent;
+        let title = self.metrics.title;
+        let options = FontOptions {
+            fluent_icons: options.fluent_icons || semibold_headings,
+            ..options.clone()
+        };
+        fonts::install_system(ctx, &options);
+        self.install(ctx);
+        if semibold_headings {
+            ctx.all_styles_mut(|style| {
+                style.text_styles.insert(
+                    TextStyle::Heading,
+                    FontId::new(title, egui::FontFamily::Name(fonts::SEMIBOLD.into())),
+                );
+            });
         }
     }
 
@@ -239,7 +326,7 @@ pub fn type_scale(style: &mut Style, m: &Metrics) {
 mod tests {
     use egui::{Color32, Context};
 
-    use super::{Appearance, Theme};
+    use super::{Appearance, Theme, ThemeFamily};
     use crate::{Metrics, Palette, presets, run_frame};
 
     #[test]
@@ -321,5 +408,84 @@ mod tests {
         Appearance::Dark.apply(&ctx);
         run_frame(&ctx, |_| {});
         assert_eq!(ctx.theme(), egui::Theme::Dark);
+    }
+
+    #[test]
+    fn the_family_survives_custom_metrics() {
+        let ctx = Context::default();
+        let custom = Metrics {
+            card_radius: 8,
+            ..Metrics::FLUENT
+        };
+        crate::fluent::theme(crate::AccentShades::WINDOWS_DEFAULT)
+            .with_metrics(custom)
+            .install(&ctx);
+        assert_eq!(ThemeFamily::of_ctx(&ctx), ThemeFamily::Fluent);
+        assert_ne!(Metrics::of_ctx(&ctx), Metrics::FLUENT);
+    }
+
+    #[test]
+    fn the_platform_decides_the_system_family() {
+        let expected = if cfg!(windows) {
+            ThemeFamily::Fluent
+        } else {
+            ThemeFamily::Graphite
+        };
+        assert_eq!(ThemeFamily::platform_default(), expected);
+        assert_eq!(Theme::system().family, expected);
+    }
+
+    #[test]
+    fn each_family_is_available_on_any_os() {
+        let accent = crate::AccentShades::WINDOWS_DEFAULT;
+        for family in [ThemeFamily::Graphite, ThemeFamily::Fluent] {
+            assert_eq!(Theme::for_family(family, accent).family, family);
+        }
+    }
+
+    /// The OS changing theme arrives through `RawInput`, and a saved choice wins.
+    #[test]
+    fn system_theme_changes_live_but_saved_overrides_remain_authoritative() {
+        let ctx = Context::default();
+        for theme in [
+            Theme::graphite(crate::AccentShades::MACOS_DEFAULT),
+            crate::fluent::theme(crate::AccentShades::WINDOWS_DEFAULT),
+        ] {
+            let (dark, light) = (theme.dark, theme.light);
+            theme.install(&ctx);
+            Appearance::System.apply(&ctx);
+            let frame = |system: egui::Theme, expected: Color32| {
+                let input = egui::RawInput {
+                    system_theme: Some(system),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    assert_eq!(ui.visuals().panel_fill, expected);
+                });
+                output.textures_delta.clear();
+            };
+            frame(egui::Theme::Dark, dark.panel_bg);
+            frame(egui::Theme::Light, light.panel_bg);
+            frame(egui::Theme::Dark, dark.panel_bg);
+
+            Appearance::Light.apply(&ctx);
+            frame(egui::Theme::Dark, light.panel_bg);
+            Appearance::Dark.apply(&ctx);
+            frame(egui::Theme::Light, dark.panel_bg);
+        }
+    }
+
+    #[test]
+    fn install_with_fonts_gives_fluent_semibold_headings_that_draw() {
+        let ctx = Context::default();
+        crate::fluent::theme(crate::AccentShades::WINDOWS_DEFAULT)
+            .install_with_fonts(&ctx, &crate::FontOptions::default());
+        run_frame(&ctx, |ui| {
+            ui.heading("A page title");
+            assert_eq!(
+                ui.style().text_styles[&egui::TextStyle::Heading].family,
+                egui::FontFamily::Name(crate::fonts::SEMIBOLD.into())
+            );
+        });
     }
 }

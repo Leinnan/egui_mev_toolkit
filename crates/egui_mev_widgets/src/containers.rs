@@ -1,10 +1,10 @@
 //! Cards, section headers, banners and other things that hold content.
 
 use egui::{
-    Align, Align2, AsIdSalt, CollapsingHeader, Color32, CornerRadius, FontId, Frame, Margin,
+    Align, Align2, AsIdSalt, CollapsingHeader, Color32, CornerRadius, FontId, Frame, Label, Margin,
     Response, RichText, Role, Sense, Stroke, Ui, Vec2, WidgetInfo,
 };
-use egui_mev_theme::{Metrics, Palette};
+use egui_mev_theme::{Metrics, Palette, ThemeFamily, fonts};
 
 use crate::marks::{self, Chevron};
 
@@ -45,18 +45,48 @@ pub fn card<R>(ui: &mut Ui, title: Option<&str>, add_body: impl FnOnce(&mut Ui) 
         .inner
 }
 
-/// Small uppercase group title, like Finder's "Favorites".
+/// A group title: small and uppercase like Finder's "Favorites" (Graphite), or a
+/// `WinUI` `BodyStrong` header in its original case (Fluent).
 pub fn section_header(ui: &mut Ui, text: &str) {
+    let label = match ThemeFamily::of(ui) {
+        ThemeFamily::Graphite => RichText::new(text.to_uppercase())
+            .size(10.5)
+            .strong()
+            .extra_letter_spacing(0.5),
+        ThemeFamily::Fluent => RichText::new(text).font(fonts::semibold(ui.ctx(), 14.0)),
+    };
+    ui.label(label.color(Palette::of(ui).section_label));
+    ui.add_space(4.0);
+}
+
+/// The title of a settings group, above its card.
+pub fn group_title(ui: &mut Ui, title: &str) {
+    let p = Palette::of(ui);
+    let text = match ThemeFamily::of(ui) {
+        ThemeFamily::Graphite => RichText::new(title).strong().size(13.0).color(p.text_weak),
+        ThemeFamily::Fluent => RichText::new(title)
+            .font(fonts::semibold(ui.ctx(), 14.0))
+            .color(p.text),
+    };
+    ui.label(text);
+}
+
+/// A page title with its supporting description.
+pub fn page_heading(ui: &mut Ui, title: &str, description: &str) {
     let p = Palette::of(ui);
     let m = Metrics::of(ui);
+    let title = match ThemeFamily::of(ui) {
+        ThemeFamily::Graphite => RichText::new(title).strong().size(m.title),
+        ThemeFamily::Fluent => RichText::new(title).font(fonts::semibold(ui.ctx(), m.title)),
+    };
+    ui.label(title.color(p.text));
+    ui.add_space(2.0);
     ui.label(
-        RichText::new(text.to_uppercase())
-            .strong()
+        RichText::new(description)
             .size(m.caption)
-            .color(p.section_label)
-            .extra_letter_spacing(0.5),
+            .color(p.text_weak),
     );
-    ui.add_space(4.0);
+    ui.add_space(14.0);
 }
 
 /// Collapsible inspector section: an uppercase title with a disclosure chevron.
@@ -95,7 +125,7 @@ pub fn inspector_section_opening(
         rect.left_center() + Vec2::new(4.0, 0.0),
         Align2::LEFT_CENTER,
         title.to_uppercase(),
-        egui_mev_theme::fonts::semibold(ui.ctx(), m.caption),
+        fonts::semibold(ui.ctx(), m.caption),
         p.section_label,
     );
     marks::chevron(
@@ -173,7 +203,7 @@ impl BannerKind {
     #[must_use]
     pub const fn colors(self, p: &Palette) -> (Color32, Color32) {
         match self {
-            Self::Info => (p.info_bg, p.accent_secondary),
+            Self::Info => (p.info_bg, p.accent),
             Self::Success => (p.success_bg, p.success),
             Self::Warning => (p.caution_bg, p.caution),
             Self::Error => (p.critical_bg, p.critical),
@@ -181,28 +211,35 @@ impl BannerKind {
     }
 }
 
-/// A full-width coloured banner with a severity icon.
+/// A full-width banner with a severity icon: tinted with its severity's colour
+/// (Graphite), or an opaque `WinUI` `InfoBar` with a neutral stroke (Fluent).
 pub fn banner(ui: &mut Ui, kind: BannerKind, text: &str) -> Response {
     let p = Palette::of(ui);
     let m = Metrics::of(ui);
     let (fill, foreground) = kind.colors(&p);
-    let text_color = p.text;
-    Frame::new()
-        .fill(fill)
-        .stroke(Stroke::new(1.0, foreground))
-        .corner_radius(CornerRadius::same(m.control_radius))
-        .inner_margin(Margin::symmetric(8, 6))
+    let frame = match ThemeFamily::of(ui) {
+        ThemeFamily::Graphite => Frame::new()
+            .fill(foreground.gamma_multiply(0.14))
+            .stroke(Stroke::new(1.0, foreground.gamma_multiply(0.55)))
+            .inner_margin(Margin::symmetric(10, 8)),
+        ThemeFamily::Fluent => Frame::new()
+            .fill(fill)
+            .stroke(Stroke::new(1.0, p.card_stroke))
+            .inner_margin(Margin::symmetric(14, 12)),
+    };
+    frame
+        .corner_radius(CornerRadius::same(m.card_radius))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                marks::severity(ui.painter(), rect, kind, foreground);
-                ui.label(
-                    RichText::new(text)
-                        .font(FontId::proportional(m.body))
-                        .color(text_color),
-                );
+                let font = FontId::proportional(m.body);
+                // As tall as a line of text, so the icon lines up with the first one.
+                let line = ui.fonts_mut(|fonts| fonts.row_height(&font));
+                let (slot, _) = ui.allocate_exact_size(Vec2::new(14.0, line), Sense::hover());
+                let icon = egui::Rect::from_center_size(slot.center(), Vec2::splat(14.0));
+                marks::severity(ui.painter(), icon, kind, foreground);
+                ui.add(Label::new(RichText::new(text).font(font).color(p.text)).wrap());
             });
         })
         .response
@@ -262,6 +299,110 @@ mod tests {
                 assert_eq!(frame.stroke.color, palette.card_stroke);
             });
         }
+    }
+
+    #[test]
+    fn a_section_header_keeps_its_case_only_under_fluent() {
+        for (family, shown, hidden) in [
+            (ThemeFamily::Graphite, "FAVORITES", "Favorites"),
+            (ThemeFamily::Fluent, "Favorites", "FAVORITES"),
+        ] {
+            let mut harness = Harness::builder()
+                .with_size([300.0, 80.0])
+                .with_context_setup(move |ctx| {
+                    egui_mev_test::install(ctx, crate::test_support::family_theme(family));
+                })
+                .build_ui(|ui| section_header(ui, "Favorites"));
+            harness.run();
+            assert!(harness.query_by_label(shown).is_some(), "{family:?}");
+            assert!(harness.query_by_label(hidden).is_none(), "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_banner_tints_on_graphite_and_is_opaque_on_fluent() {
+        for kind in [
+            BannerKind::Info,
+            BannerKind::Success,
+            BannerKind::Warning,
+            BannerKind::Error,
+        ] {
+            let ctx = crate::test_support::themed_family(ThemeFamily::Graphite, egui::Theme::Dark);
+            let (_, foreground) = kind.colors(&egui_mev_theme::Theme::of(&ctx).dark);
+            let output = crate::test_support::frame_output(&ctx, 0.0, Vec::new(), |ui| {
+                banner(ui, kind, "Note");
+            });
+            let colors = crate::test_support::painted_colors(&output);
+            assert!(
+                colors.contains(&foreground.gamma_multiply(0.14)),
+                "{kind:?}"
+            );
+            assert!(
+                colors.contains(&foreground.gamma_multiply(0.55)),
+                "{kind:?}"
+            );
+
+            let ctx = crate::test_support::themed_family(ThemeFamily::Fluent, egui::Theme::Dark);
+            let p = egui_mev_theme::Theme::of(&ctx).dark;
+            let (fill, _) = kind.colors(&p);
+            let output = crate::test_support::frame_output(&ctx, 0.0, Vec::new(), |ui| {
+                banner(ui, kind, "Note");
+            });
+            let colors = crate::test_support::painted_colors(&output);
+            assert!(colors.contains(&fill), "{kind:?}");
+            assert!(colors.contains(&p.card_stroke), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_banner_wraps_inside_its_width() {
+        let ctx = crate::test_support::themed_family(ThemeFamily::Fluent, egui::Theme::Dark);
+        crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+            ui.set_max_width(200.0);
+            let one_line = banner(ui, BannerKind::Info, "Short").rect;
+            let wrapped = banner(ui, BannerKind::Info, &"A long sentence. ".repeat(8)).rect;
+            assert!(wrapped.height() > one_line.height());
+            assert!(wrapped.width() <= 200.0 + 1.0);
+        });
+    }
+
+    #[test]
+    fn titles_follow_the_family() {
+        for family in [ThemeFamily::Graphite, ThemeFamily::Fluent] {
+            let mut harness = Harness::builder()
+                .with_size([400.0, 200.0])
+                .with_context_setup(move |ctx| {
+                    egui_mev_test::install(ctx, crate::test_support::family_theme(family));
+                })
+                .build_ui(|ui| {
+                    page_heading(ui, "Network", "How this app reaches the server.");
+                    group_title(ui, "Proxy");
+                });
+            harness.run();
+            for label in ["Network", "How this app reaches the server.", "Proxy"] {
+                assert!(
+                    harness.query_by_label(label).is_some(),
+                    "{family:?} {label}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn card_frames_read_their_sizes_from_the_metrics() {
+        let ctx = egui::Context::default();
+        egui_mev_theme::Theme::dark_only(presets::GRAPHITE_DARK)
+            .with_metrics(Metrics {
+                card_radius: 3,
+                card_padding: 21,
+                ..Metrics::GRAPHITE
+            })
+            .install(&ctx);
+        crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+            let frame = card_frame(ui);
+            assert_eq!(frame.corner_radius, CornerRadius::same(3));
+            assert_eq!(frame.inner_margin, Margin::same(21));
+        });
     }
 
     #[test]

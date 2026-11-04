@@ -5,13 +5,14 @@ use std::path::{Path, PathBuf};
 
 use egui::{Context, FontData, FontDefinitions, FontFamily, FontId};
 
-use crate::IconFont;
+use crate::{IconFont, icons::FLUENT_ICONS_FAMILY};
 
 /// Roboto Condensed SemiBold (SIL OFL, see `assets/fonts/OFL.txt`).
 #[cfg(feature = "roboto")]
 pub const ROBOTO_CONDENSED: &[u8] = include_bytes!("../assets/fonts/RobotoCondensed-SemiBold.ttf");
 
-const SEMIBOLD: &str = "semibold";
+/// Name of the semibold family every setup here registers.
+pub const SEMIBOLD: &str = "semibold";
 
 /// UI font files to try, most preferred first.
 const UI_FONTS: &[&str] = if cfg!(target_os = "macos") {
@@ -37,11 +38,16 @@ const MONO_FONTS: &[&str] = if cfg!(target_os = "macos") {
 };
 
 /// Semibold UI font files to try, most preferred first.
-const SEMIBOLD_FONTS: &[&str] = if cfg!(windows) {
+const SEMIBOLD_FONTS: &[&str] = if cfg!(target_os = "macos") {
+    &["SFCompact.ttf"]
+} else if cfg!(windows) {
     &["seguisb.ttf"]
 } else {
     &["Inter-SemiBold.ttf", "NotoSans-SemiBold.ttf"]
 };
+
+/// Segoe Fluent Icons, from the system and never bundled.
+const FLUENT_ICON_FONTS: &[&str] = &["SegoeIcons.ttf", "segmdl2.ttf"];
 
 /// What an app adds to the platform's fonts.
 #[derive(Clone, Debug, Default)]
@@ -51,6 +57,10 @@ pub struct FontOptions {
     /// A font the app bundles: the base of the `Proportional` chain, so the app
     /// looks the same where no system font is found.
     pub bundled_ui: Option<&'static [u8]>,
+    /// Register Segoe Fluent Icons where the system has it, for
+    /// [`crate::Glyph::themed`]. It keeps a family of its own and stays out of
+    /// the `Proportional` chain, because its private-use range collides with Lucide.
+    pub fluent_icons: bool,
 }
 
 /// Build the fonts, reading files through `load`, which gets candidate file
@@ -113,6 +123,18 @@ pub fn definitions_with_loader(
         .insert(FontFamily::Name(SEMIBOLD.into()), semibold);
     for icon_font in &options.icons {
         icon_font.register(&mut fonts);
+    }
+    if options.fluent_icons
+        && let Some(bytes) = load(FLUENT_ICON_FONTS)
+    {
+        fonts.font_data.insert(
+            FLUENT_ICONS_FAMILY.to_owned(),
+            FontData::from_owned(bytes).into(),
+        );
+        fonts.families.insert(
+            FontFamily::Name(FLUENT_ICONS_FAMILY.into()),
+            vec![FLUENT_ICONS_FAMILY.to_owned()],
+        );
     }
     fonts
 }
@@ -307,6 +329,32 @@ mod tests {
         assert_eq!(
             semibold(&ctx, 14.0).family,
             FontFamily::Name("semibold".into())
+        );
+    }
+
+    #[test]
+    fn fluent_icons_get_their_own_family_and_stay_out_of_the_text_chain() {
+        let bytes = stand_in();
+        let options = FontOptions {
+            fluent_icons: true,
+            ..FontOptions::default()
+        };
+        let fonts = definitions_with_loader(&options, |names| {
+            (names == super::FLUENT_ICON_FONTS).then(|| bytes.to_vec())
+        });
+        let family = crate::icons::FLUENT_ICONS_FAMILY;
+        assert_eq!(fonts.families[&FontFamily::Name(family.into())], [family]);
+        assert!(
+            !fonts.families[&FontFamily::Proportional]
+                .iter()
+                .any(|n| n == family)
+        );
+        // Absent from the system, the family isn't registered at all.
+        let missing = definitions_with_loader(&options, |_| None);
+        assert!(
+            !missing
+                .families
+                .contains_key(&FontFamily::Name(family.into()))
         );
     }
 

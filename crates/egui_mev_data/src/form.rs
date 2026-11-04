@@ -521,12 +521,7 @@ pub enum Outcome {
 /// The margin of a text field, for the multi-line one the widgets crate doesn't
 /// build. It matches [`egui_mev_widgets::text_field`].
 fn text_field_margin(ui: &Ui) -> Margin {
-    let margin_x = if Metrics::of(ui) == Metrics::FLUENT {
-        4
-    } else {
-        8
-    };
-    Margin::symmetric(margin_x, 2)
+    Margin::symmetric(Metrics::of(ui).text_field_margin, 2)
 }
 
 /// An open form dialog.
@@ -595,7 +590,8 @@ impl FormState {
             .title
             .clone()
             .unwrap_or_else(|| default_title.to_owned());
-        ui.label(RichText::new(title).heading().strong());
+        let color = Palette::of(ui).text;
+        ui.label(RichText::new(title).heading().strong().color(color));
         ui.add_space(6.0);
         egui::ScrollArea::vertical()
             .max_height((ui.ctx().content_rect().height() - 200.0).max(160.0))
@@ -656,7 +652,7 @@ impl FormState {
                     ui.end_row();
                 }
                 FieldType::Group => {
-                    ui.label(RichText::new(field.label()).strong());
+                    ui.label(RichText::new(field.label()).strong().color(p.text));
                     ui.label("");
                     ui.end_row();
                     self.fields_ui(ui, &field.fields, enabled);

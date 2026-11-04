@@ -1,32 +1,39 @@
-//! How a form and a table look in both graphite palettes. After changing one,
-//! rerun with `UPDATE_SNAPSHOTS=1` and look at the new images.
+//! How a form and a table look in the graphite and Fluent palettes. After changing
+//! one, rerun with `UPDATE_SNAPSHOTS=1` and look at the new images.
 
 use egui::{Ui, Vec2, vec2};
 use egui_kittest::{Harness, SnapshotResults};
 use egui_mev_data::{Form, FormState, TableSpec, TableView};
 use egui_mev_test::{install, settle, snapshot_lock, snapshot_options};
-use egui_mev_theme::{Palette, Theme, presets};
+use egui_mev_theme::{AccentShades, Palette, Theme, fluent, presets};
 use serde_json::json;
 
-const MODES: [(egui::Theme, &str); 2] = [
-    (egui::Theme::Dark, "graphite_dark"),
-    (egui::Theme::Light, "graphite_light"),
+fn graphite() -> Theme {
+    Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT)
+}
+
+fn windows() -> Theme {
+    fluent::theme(AccentShades::WINDOWS_DEFAULT)
+}
+
+type Look = (fn() -> Theme, egui::Theme, &'static str);
+
+const LOOKS: [Look; 4] = [
+    (graphite, egui::Theme::Dark, "graphite_dark"),
+    (graphite, egui::Theme::Light, "graphite_light"),
+    (windows, egui::Theme::Dark, "fluent_dark"),
+    (windows, egui::Theme::Light, "fluent_light"),
 ];
 
 fn snapshot<S>(name: &str, size: Vec2, state: impl Fn() -> S, show: impl Fn(&mut Ui, &mut S)) {
     let _guard = snapshot_lock();
     let options = snapshot_options();
     let mut results = SnapshotResults::new();
-    for (mode, suffix) in MODES {
+    for (theme, mode, suffix) in LOOKS {
         let mut harness = Harness::builder()
             .with_size(size)
             .with_theme(mode)
-            .with_context_setup(|ctx| {
-                install(
-                    ctx,
-                    Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT),
-                );
-            })
+            .with_context_setup(move |ctx| install(ctx, theme()))
             .build_ui_state(
                 |ui, state: &mut S| {
                     // The harness only fills what its contents take up.
@@ -105,7 +112,7 @@ fn form_with_every_field_type() {
 
 #[test]
 fn table_sorted_descending() {
-    snapshot("table", vec2(620.0, 280.0), sample_table, |ui, table| {
+    snapshot("table", vec2(620.0, 400.0), sample_table, |ui, table| {
         table.contents_ui(ui);
     });
 }
@@ -117,7 +124,7 @@ fn table_sorted_ascending_on_the_first_column() {
         table.apply_sort((0, false));
         table
     };
-    snapshot("table_by_name", vec2(620.0, 280.0), sorted, |ui, table| {
+    snapshot("table_by_name", vec2(620.0, 400.0), sorted, |ui, table| {
         table.contents_ui(ui);
     });
 }

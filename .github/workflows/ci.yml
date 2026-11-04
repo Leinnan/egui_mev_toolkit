@@ -27,7 +27,11 @@ jobs:
       - run: just check
       - run: just check-alone
       - run: just check-web
+      # Baselines come from macOS, and Linux's software renderer rasterizes
+      # differently: run every snapshot test, but re-record instead of comparing.
       - run: cargo nextest run --workspace --all-features --profile ci
+        env:
+          UPDATE_SNAPSHOTS: "true"
 
   # The native menu only compiles on macOS, so the Linux job never sees it.
   macos:
@@ -41,3 +45,21 @@ jobs:
           tool: cargo-nextest
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo nextest run --workspace --all-features --profile ci
+
+  # Registry accent, DWM chrome, Segoe fonts and the DX12 path only run here.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # Baselines come from macOS, as on Linux.
+      - run: cargo nextest run --workspace --all-features --profile ci
+        env:
+          UPDATE_SNAPSHOTS: "true"

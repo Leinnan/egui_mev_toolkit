@@ -832,6 +832,8 @@ impl SearchPicker<'_> {
                         .id(ui.scope_id().with("query"))
                         .hint_text(self.hint)
                         .frame(Frame::NONE)
+                        .min_size(Vec2::new(0.0, ui.spacing().interact_size.y))
+                        .align(egui::Align2::LEFT_CENTER)
                         .desired_width(ui.available_width()),
                 )
                 .accessible_name(self.hint);

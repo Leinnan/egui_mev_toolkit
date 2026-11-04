@@ -15,17 +15,55 @@ Use one rev for every toolkit crate. Two revs compile two copies, and their `Pal
 
 ## Installing the theme
 
-Call this once, from the eframe app creator, for every egui context:
+Call this once, from the eframe app creator, for every egui context. To look like the OS it runs on, following its light or dark setting:
 
 ```rust
-use egui_mev_theme::{Theme, presets};
+use egui_mev_theme::{FontOptions, Theme};
 
-Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT).install(&cc.egui_ctx);
+Theme::system().install_with_fonts(&cc.egui_ctx, &FontOptions::default());
 ```
 
-`Theme::dark_only(palette)` uses one palette whatever the system asks for.
+Enable the `native` feature to read the user's accent colour from the OS. Without it, `Theme::system()` uses the platform's default accent.
+
+Other choices:
+
+- `Theme::for_family(family, accent)`: either look on any OS, which suits a look setting. `ThemeFamily::Graphite` is macOS-style and `ThemeFamily::Fluent` is Windows 11 style.
+- `Theme::new(dark, light)`: palettes of your own, drawn like Graphite.
+- `Theme::dark_only(palette)`: one palette, whatever the system asks for.
+- `.with_metrics(Metrics::COMFORTABLE)`: other sizes, without changing the look.
+
+`Appearance` is a ready-made System, Light or Dark setting. Install `Theme::system()` again to pick up a changed accent. Nothing watches for it.
+
+Widgets take their structure from the family, so a dialog's buttons are listed with the main action first and the look decides where each goes. To use Segoe Fluent Icons where they exist, pass `Glyph::themed(ctx, icon)` to icon widgets. They only appear on Windows under Fluent, and Lucide stands in elsewhere.
+
+After changing fonts at run time, call `egui_mev_widgets::text_fit::clear_pool()`. That cache is per thread, and cached text from the old fonts would come out garbled. Changing colours or metrics alone doesn't need it.
+
+For snapshot tests, use fixed accents and machine-independent fonts, so a result doesn't depend on who runs it:
+
+```rust
+fluent::theme(AccentShades::WINDOWS_DEFAULT).install(&ctx);
+fonts::install_test(&ctx, &FontOptions::default());
+```
+
+## Native window chrome
+
+Fluent looks closest with Windows' rounded corners and a matching caption. Enable `egui_mev_app`'s `chrome` feature, and either wrap an eframe app in `ChromeApp`, or hold a `NativeChrome` per window and call `sync` each frame. Both are no-ops off Windows and off Fluent.
+
+On macOS, `native::unified_titlebar(viewport)` extends content under the title bar, and `title_bar` leaves room for the traffic lights and drags the window. Both follow the platform rather than the look, so Fluent simulated on a Mac gets the Mac's window.
+
+## Mica
+
+Mica needs a transparent DX12 swapchain and `WS_EX_NOREDIRECTIONBITMAP`, which eframe can't set, so eframe apps stay solid. `egui_mev_host` is a raw winit window that can host it, falling back to the opaque look where the OS refuses. It runs a `HostApp` rather than an `eframe::App`, and `run` is the simple way in:
+
+```rust
+egui_mev_host::run(MyApp::default(), HostOptions::new("My app"))?;
+```
+
+The host doesn't enable `egui/default_fonts`. An app that may run where no system font is found needs `FontOptions::bundled_ui` or that feature.
 
 ## Renderers
+
+`ChromeApp` doesn't forward `App::on_exit`, so a wrapped app cleans up in `Drop`.
 
 `egui_mev_app` picks no renderer. Its `eframe` feature doesn't compile on its own, because eframe 0.37 needs one, so the app enables `eframe/glow` or `eframe/wgpu_no_default_features` itself, or uses the `wgpu` feature for per-OS backend presets.
 

@@ -1,13 +1,110 @@
-//! Window chrome behaviour: dragging by the toolbar, collapsing the sidebar.
+//! Window chrome behaviour: the title bar, dragging by it, collapsing the sidebar.
 
-use egui::{Rect, Sense, Ui, ViewportCommand};
+use egui::{Frame, InnerResponse, Panel, Rect, RichText, Sense, Ui, ViewportCommand};
+use egui_mev_theme::Palette;
+
+/// Height of a title bar or a unified toolbar.
+pub const TOOLBAR_HEIGHT: f32 = 38.0;
+
+/// Leading space a title bar leaves on this platform: room for the traffic
+/// lights on macOS, a small margin elsewhere.
+pub const TRAFFIC_LIGHT_INSET: f32 = WindowCaption::CURRENT.leading_inset();
+
+/// Who draws a window's title bar. It follows the platform and never the theme
+/// family: Fluent simulated on a Mac still sits under the traffic lights.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowCaption {
+    /// macOS: content runs under a transparent title bar that shows only the
+    /// traffic lights, so the app draws the title and handles dragging.
+    Unified,
+    /// The OS draws a caption above the content, with the title in it, and
+    /// handles dragging itself.
+    Native,
+}
+
+impl WindowCaption {
+    const CURRENT: Self = if cfg!(target_os = "macos") {
+        Self::Unified
+    } else {
+        Self::Native
+    };
+
+    const fn leading_inset(self) -> f32 {
+        match self {
+            Self::Unified => 76.0,
+            Self::Native => 8.0,
+        }
+    }
+}
+
+/// What [`title_bar`] shows.
+#[derive(Clone, Debug, Default)]
+pub struct TitleBarOptions {
+    /// The window's title, drawn where the OS caption doesn't already show it.
+    /// Empty draws nothing.
+    pub title: String,
+}
+
+impl TitleBarOptions {
+    /// A title bar with this title.
+    #[must_use]
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+        }
+    }
+}
+
+/// A bar across the top of `ui`, [`TOOLBAR_HEIGHT`] tall, that also works as the
+/// window's title bar: it leaves room for the platform's traffic lights, drags
+/// the window where nothing else takes the pointer, and draws the title unless
+/// the OS caption already shows it.
+///
+/// `contents` gets a centred left-to-right `ui` after the title and adds its own
+/// trailing space. Use [`egui::Ui::with_layout`] for controls on the far side.
+/// The window should come from `native::unified_titlebar`.
+pub fn title_bar<R>(
+    ui: &mut Ui,
+    options: &TitleBarOptions,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    title_bar_on(ui, options, WindowCaption::CURRENT, contents)
+}
+
+fn title_bar_on<R>(
+    ui: &mut Ui,
+    options: &TitleBarOptions,
+    caption: WindowCaption,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    let palette = Palette::of(ui);
+    Panel::top("egui_mev_title_bar")
+        .frame(Frame::new().fill(palette.toolbar_bg))
+        .exact_size(TOOLBAR_HEIGHT)
+        .show(ui, |ui| {
+            // First, so the controls added after it keep input priority.
+            window_drag_on(ui, ui.max_rect(), caption);
+            ui.horizontal_centered(|ui| {
+                ui.add_space(caption.leading_inset());
+                if caption == WindowCaption::Unified && !options.title.is_empty() {
+                    ui.label(RichText::new(&options.title).strong().color(palette.text));
+                }
+                contents(ui)
+            })
+            .inner
+        })
+}
 
 /// With a transparent macOS title bar the toolbar doubles as the drag region:
 /// dragging empty toolbar space moves the window and a double-click zooms it.
 /// Call it before adding the toolbar's controls, so they keep priority. It does
 /// nothing on other systems, whose title bars do this themselves.
 pub fn handle_window_drag(ui: &Ui, rect: Rect) {
-    if !cfg!(target_os = "macos") {
+    window_drag_on(ui, rect, WindowCaption::CURRENT);
+}
+
+fn window_drag_on(ui: &Ui, rect: Rect, caption: WindowCaption) {
+    if caption == WindowCaption::Native {
         return;
     }
     let response = ui.interact(
@@ -114,6 +211,192 @@ mod tests {
             sidebar_auto_collapse(1000.0, THRESHOLD, THRESHOLD, false, true),
             (true, false)
         );
+    }
+
+    mod title_bar {
+        use super::super::{TOOLBAR_HEIGHT, TitleBarOptions, WindowCaption, title_bar_on};
+        use egui::{
+            Context, Event, Modifiers, PointerButton, RawInput, Rect, ViewportCommand, ViewportId,
+            pos2, vec2,
+        };
+        use egui_mev_theme::{AccentShades, Theme, fluent};
+
+        const AT_EMPTY_SPACE: egui::Pos2 = pos2(300.0, 20.0);
+
+        struct Frame {
+            commands: Vec<ViewportCommand>,
+            texts: Vec<String>,
+            contents_left: f32,
+            clicked: bool,
+            bar_height: f32,
+        }
+
+        /// One frame of a bar holding a button, with `events` at `time`.
+        fn frame(ctx: &Context, caption: WindowCaption, time: f64, events: Vec<Event>) -> Frame {
+            let input = RawInput {
+                time: Some(time),
+                events,
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 200.0))),
+                ..RawInput::default()
+            };
+            let (mut contents_left, mut clicked, mut bar_height) = (0.0, false, 0.0);
+            let mut output = ctx.run_ui(input, |ui| {
+                let options = TitleBarOptions::new("Window title");
+                let bar = title_bar_on(ui, &options, caption, |ui| {
+                    contents_left = ui.next_widget_position().x;
+                    clicked = ui.button("Go").clicked();
+                });
+                bar_height = bar.response.rect.height();
+            });
+            output.textures_delta.clear();
+            let texts = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            Frame {
+                commands: output
+                    .viewport_output
+                    .remove(&ViewportId::ROOT)
+                    .map(|viewport| viewport.commands)
+                    .unwrap_or_default(),
+                texts,
+                contents_left,
+                clicked,
+                bar_height,
+            }
+        }
+
+        fn button(pressed: bool, at: egui::Pos2) -> Event {
+            Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            }
+        }
+
+        /// Press at `at`, then drag away; returns the commands the drag sent.
+        fn drag_from(
+            ctx: &Context,
+            caption: WindowCaption,
+            at: egui::Pos2,
+        ) -> Vec<ViewportCommand> {
+            frame(ctx, caption, 0.0, vec![Event::PointerMoved(at)]);
+            frame(ctx, caption, 0.1, vec![button(true, at)]);
+            let moved = at + vec2(40.0, 0.0);
+            frame(ctx, caption, 0.8, vec![Event::PointerMoved(moved)]).commands
+        }
+
+        #[test]
+        fn the_bar_has_the_toolbar_height() {
+            let ctx = Context::default();
+            let bar = frame(&ctx, WindowCaption::Unified, 0.0, vec![]);
+            assert_eq!(bar.bar_height, TOOLBAR_HEIGHT);
+        }
+
+        #[test]
+        fn a_unified_window_makes_room_for_the_traffic_lights_and_draws_the_title() {
+            let ctx = Context::default();
+            let bar = frame(&ctx, WindowCaption::Unified, 0.0, vec![]);
+            assert_eq!(WindowCaption::Unified.leading_inset(), 76.0);
+            assert!(bar.contents_left > 76.0, "{}", bar.contents_left);
+            assert!(bar.texts.iter().any(|text| text == "Window title"));
+        }
+
+        #[test]
+        fn an_empty_title_leaves_contents_at_the_inset() {
+            let ctx = Context::default();
+            let mut contents_left = 0.0;
+            let mut output = ctx.run_ui(RawInput::default(), |ui| {
+                title_bar_on(
+                    ui,
+                    &TitleBarOptions::default(),
+                    WindowCaption::Unified,
+                    |ui| {
+                        contents_left = ui.next_widget_position().x;
+                    },
+                );
+            });
+            output.textures_delta.clear();
+            assert_eq!(contents_left, 76.0);
+        }
+
+        #[test]
+        fn a_native_caption_keeps_the_title_and_a_small_inset() {
+            let ctx = Context::default();
+            let bar = frame(&ctx, WindowCaption::Native, 0.0, vec![]);
+            assert_eq!(bar.contents_left, 8.0);
+            assert!(!bar.texts.iter().any(|text| text == "Window title"));
+        }
+
+        /// The look must not decide the inset: Fluent on a Mac is still a Mac window.
+        #[test]
+        fn the_family_does_not_change_the_platform_layout() {
+            let graphite = Context::default();
+            Theme::graphite(AccentShades::MACOS_DEFAULT).install(&graphite);
+            let fluent = Context::default();
+            fluent::theme(AccentShades::WINDOWS_DEFAULT).install(&fluent);
+            for ctx in [&graphite, &fluent] {
+                let bar = frame(ctx, WindowCaption::Unified, 0.0, vec![]);
+                assert!(bar.contents_left > 76.0);
+                assert!(bar.texts.iter().any(|text| text == "Window title"));
+                let bar = frame(ctx, WindowCaption::Native, 0.0, vec![]);
+                assert_eq!(bar.contents_left, 8.0);
+                assert!(!bar.texts.iter().any(|text| text == "Window title"));
+            }
+        }
+
+        #[test]
+        fn empty_space_drags_a_unified_window() {
+            let ctx = Context::default();
+            let commands = drag_from(&ctx, WindowCaption::Unified, AT_EMPTY_SPACE);
+            assert!(
+                commands.contains(&ViewportCommand::StartDrag),
+                "{commands:?}"
+            );
+        }
+
+        #[test]
+        fn a_native_caption_does_its_own_dragging() {
+            let ctx = Context::default();
+            let commands = drag_from(&ctx, WindowCaption::Native, AT_EMPTY_SPACE);
+            assert!(
+                !commands.contains(&ViewportCommand::StartDrag),
+                "{commands:?}"
+            );
+        }
+
+        #[test]
+        fn below_the_bar_does_not_drag() {
+            let ctx = Context::default();
+            let commands = drag_from(&ctx, WindowCaption::Unified, pos2(300.0, 100.0));
+            assert!(
+                !commands.contains(&ViewportCommand::StartDrag),
+                "{commands:?}"
+            );
+        }
+
+        #[test]
+        fn controls_keep_their_clicks_over_the_drag_region() {
+            let ctx = Context::default();
+            let caption = WindowCaption::Unified;
+            // Lay out once to find the button: it starts where the contents do.
+            let left = frame(&ctx, caption, 0.0, vec![]).contents_left;
+            let at = pos2(left + 4.0, TOOLBAR_HEIGHT / 2.0);
+            frame(&ctx, caption, 0.1, vec![Event::PointerMoved(at)]);
+            frame(&ctx, caption, 0.2, vec![button(true, at)]);
+            let released = frame(&ctx, caption, 0.3, vec![button(false, at)]);
+            assert!(released.clicked);
+            assert!(
+                !released.commands.contains(&ViewportCommand::StartDrag),
+                "{:?}",
+                released.commands
+            );
+        }
     }
 
     #[cfg(target_os = "macos")]

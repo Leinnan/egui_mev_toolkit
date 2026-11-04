@@ -9,6 +9,7 @@ just check         # fmt, clippy -D warnings, crate boundaries
 just test          # all tests, with nextest when installed
 just check-alone   # each crate alone with no default features
 just check-web     # crates meant to run on the web
+just check-windows # Windows code, which only compiles from other OSes
 just ci            # everything CI runs
 ```
 
@@ -20,4 +21,5 @@ just ci            # everything CI runs
 - Every crate's manifest has `exclude.workspace = true`, so snapshot images stay out of packages. `scripts/check-boundaries.sh` checks this.
 - Add a new crate to the lists in `scripts/check-boundaries.sh` and the table in `README.md` when you add it to `crates/`.
 - Widgets read colours through `Palette::of(ui)` and shared sizes through `Metrics::of(ui)`. Never add a theme colour to a widget as a constant. Colours that belong to the content can stay literal, like the corners of a colour triangle or a transparency checker, and so can layout numbers private to one widget, like a popup's width.
+- Branch on `ThemeFamily::of(ui)` only where a widget's structure differs between looks. Sizes belong in `Metrics` and colours in `Palette`. A family is the look; the platform is the window. Traffic lights and native captions follow `cfg!`, not the family, so Fluent simulated on a Mac still leaves room for them.
 - Accept snapshot changes only after looking at the new image. `UPDATE_SNAPSHOTS=1 just test` rewrites them.

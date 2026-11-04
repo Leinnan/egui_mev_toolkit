@@ -41,20 +41,18 @@ mod tests {
     use crate::{Palette, presets};
 
     fn presets() -> Vec<(&'static str, Palette)> {
-        let list = vec![
+        use crate::{
+            AccentShades,
+            fluent::{fluent_dark, fluent_light},
+        };
+        vec![
             ("graphite dark", presets::GRAPHITE_DARK),
             ("graphite light", presets::GRAPHITE_LIGHT),
+            ("macos light", presets::MACOS_LIGHT),
             ("slate dark", presets::SLATE_DARK),
-        ];
-        #[cfg(feature = "fluent")]
-        let list = {
-            use crate::fluent::{AccentShades, fluent_dark, fluent_light};
-            let mut list = list;
-            list.push(("fluent dark", fluent_dark(AccentShades::WINDOWS_DEFAULT)));
-            list.push(("fluent light", fluent_light(AccentShades::WINDOWS_DEFAULT)));
-            list
-        };
-        list
+            ("fluent dark", fluent_dark(AccentShades::WINDOWS_DEFAULT)),
+            ("fluent light", fluent_light(AccentShades::WINDOWS_DEFAULT)),
+        ]
     }
 
     #[test]
@@ -94,6 +92,19 @@ mod tests {
             ] {
                 let ratio = contrast(text, fill);
                 assert!(ratio >= 3.0, "{name}: {role} is only {ratio:.2}:1");
+            }
+        }
+    }
+
+    #[test]
+    fn a_focus_ring_stands_out_from_what_it_surrounds() {
+        for (name, p) in presets() {
+            for (role, fill) in [("panel", p.panel_bg), ("card", p.card_bg)] {
+                let ratio = contrast(p.accent, fill);
+                assert!(
+                    ratio >= 3.0,
+                    "{name}: accent on {role} is only {ratio:.2}:1"
+                );
             }
         }
     }

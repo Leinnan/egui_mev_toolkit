@@ -4,7 +4,7 @@ use egui::{
     Align2, Button, Color32, CornerRadius, FontId, Painter, Rect, Response, RichText, Role, Sense,
     Stroke, Ui, Vec2, WidgetInfo,
 };
-use egui_mev_theme::{Glyph, Metrics, Palette};
+use egui_mev_theme::{Glyph, Metrics, Palette, ThemeFamily, contrast::contrast};
 
 /// Narrowest a call-to-action button gets, so "OK" stays easy to hit (px).
 const CTA_MIN_WIDTH: f32 = 72.0;
@@ -26,10 +26,27 @@ pub fn primary(ui: &Ui, text: &str) -> Button<'static> {
     cta(ui, label, p.accent, p.accent)
 }
 
+/// Least contrast a muted button label may have on its button's face. Below this
+/// it reads as disabled.
+const MIN_MUTED_CONTRAST: f32 = 3.0;
+
+/// Text colour of neutral buttons: muted on Graphite where the palette leaves it
+/// legible, primary text on Fluent, where button labels are never dimmed.
+pub(crate) fn neutral_text(ui: &Ui) -> Color32 {
+    let p = Palette::of(ui);
+    match ThemeFamily::of(ui) {
+        ThemeFamily::Graphite if contrast(p.text_weak, p.card_bg) >= MIN_MUTED_CONTRAST => {
+            p.text_weak
+        }
+        ThemeFamily::Graphite | ThemeFamily::Fluent => p.text,
+    }
+}
+
 /// Outlined low-emphasis button.
 pub fn secondary(ui: &Ui, text: &str) -> Button<'static> {
     let p = Palette::of(ui);
-    cta(ui, RichText::new(text).color(p.text), p.card_bg, p.border)
+    let label = RichText::new(text).color(neutral_text(ui));
+    cta(ui, label, p.card_bg, p.border)
 }
 
 /// Button with a red outline, for actions in a danger zone.
@@ -227,10 +244,9 @@ fn labelled(response: Response, tip: &Tip<'_>, enabled: bool) -> Response {
     response
 }
 
-/// Size of a toolbar icon button: a little wider than a built-in control is tall.
+/// Size of a toolbar icon button.
 fn toolbar_size(ui: &Ui) -> Vec2 {
-    let height = Metrics::of(ui).interact_height.max(24.0);
-    Vec2::new(height + 4.0, height)
+    Vec2::from(Metrics::of(ui).toolbar_icon_size)
 }
 
 const TOOLBAR_GLYPH: f32 = 16.0;
@@ -276,7 +292,7 @@ pub fn tool_button<'a>(
 }
 
 /// Small borderless icon button for inline actions (swap colours, reset a
-/// value), sized to its glyph.
+/// value), sized to its glyph so it fits a tight row in any look.
 pub fn small_icon_button<'a>(
     ui: &mut Ui,
     icon: impl Into<Glyph>,
@@ -390,6 +406,51 @@ mod tests {
             assert!(colors.contains(&palette.accent), "{mode:?}");
             assert!(colors.contains(&palette.critical), "{mode:?}");
             assert!(colors.contains(&palette.card_bg), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn secondary_text_follows_the_family() {
+        for family in [ThemeFamily::Graphite, ThemeFamily::Fluent] {
+            let ctx = crate::test_support::themed_family(family, egui::Theme::Dark);
+            let p = Theme::of(&ctx).dark;
+            let expected = match family {
+                ThemeFamily::Graphite => p.text_weak,
+                ThemeFamily::Fluent => p.text,
+            };
+            let output = crate::test_support::frame_output(&ctx, 0.0, Vec::new(), |ui| {
+                secondary_button(ui, "Cancel");
+            });
+            let colors = crate::test_support::painted_colors(&output);
+            assert!(colors.contains(&expected), "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_muted_label_too_faint_for_its_palette_stays_legible() {
+        let ctx = crate::test_support::themed(egui::Theme::Light);
+        crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+            // Muted text is about 2.6:1 on this palette's button face.
+            assert_eq!(neutral_text(ui), presets::GRAPHITE_LIGHT.text);
+        });
+    }
+
+    #[test]
+    fn toolbar_icons_size_from_the_metrics_and_small_ones_from_their_glyph() {
+        for (family, size) in [
+            (ThemeFamily::Graphite, Vec2::new(28.0, 24.0)),
+            (ThemeFamily::Fluent, Vec2::new(36.0, 32.0)),
+        ] {
+            let ctx = crate::test_support::themed_family(family, egui::Theme::Dark);
+            crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+                assert_eq!(toolbar_icon(ui, ICON, false, "A").rect.size(), size);
+                assert_eq!(toolbar_icon_enabled(ui, ICON, true, "B").rect.size(), size);
+                // Sized to its glyph, so it fits a tight row in any look.
+                assert_eq!(
+                    small_icon_button(ui, ICON, 12.0, true, "C").rect.size(),
+                    Vec2::splat(20.0)
+                );
+            });
         }
     }
 

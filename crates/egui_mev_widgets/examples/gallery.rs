@@ -7,31 +7,21 @@
 #[path = "../tests/support/gallery_ui.rs"]
 mod gallery_ui;
 
-use egui_mev_theme::{FontOptions, IconFont, Theme, fonts, presets};
+use egui_mev_theme::{FontOptions, IconFont};
 use egui_mev_widgets::segmented;
-use gallery_ui::{GalleryState, gallery_ui};
+use gallery_ui::{GalleryState, Look, gallery_ui};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Look {
-    GraphiteDark,
-    GraphiteLight,
-    SlateDark,
-}
-
-impl Look {
-    fn install(self, ctx: &egui::Context) {
-        match self {
-            Self::GraphiteDark => {
-                Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT).install(ctx);
-                ctx.set_theme(egui::Theme::Dark);
-            }
-            Self::GraphiteLight => {
-                Theme::new(presets::GRAPHITE_DARK, presets::GRAPHITE_LIGHT).install(ctx);
-                ctx.set_theme(egui::Theme::Light);
-            }
-            Self::SlateDark => Theme::dark_only(presets::SLATE_DARK).install(ctx),
-        }
-    }
+fn install(look: Look, ctx: &egui::Context) {
+    look.theme().install_with_fonts(
+        ctx,
+        &FontOptions {
+            icons: vec![IconFont::Lucide],
+            ..Default::default()
+        },
+    );
+    ctx.set_theme(look.mode());
+    // Fitted text belongs to the fonts it was laid out with.
+    egui_mev_widgets::text_fit::clear_pool();
 }
 
 struct Gallery {
@@ -45,18 +35,9 @@ impl eframe::App for Gallery {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label("Theme");
-                let changed = segmented(
-                    ui,
-                    "look",
-                    &mut self.look,
-                    &[
-                        (Look::GraphiteDark, "Graphite dark"),
-                        (Look::GraphiteLight, "Graphite light"),
-                        (Look::SlateDark, "Slate dark"),
-                    ],
-                );
-                if changed {
-                    self.look.install(ui.ctx());
+                let options = Look::ALL.map(|look| (look, look.label()));
+                if segmented(ui, "look", &mut self.look, &options) {
+                    install(self.look, ui.ctx());
                 }
             });
             ui.add_space(4.0);
@@ -76,14 +57,7 @@ fn main() -> eframe::Result {
         },
         Box::new(|cc| {
             let look = Look::GraphiteDark;
-            look.install(&cc.egui_ctx);
-            fonts::install_system(
-                &cc.egui_ctx,
-                &FontOptions {
-                    icons: vec![IconFont::Lucide],
-                    ..Default::default()
-                },
-            );
+            install(look, &cc.egui_ctx);
             Ok(Box::new(Gallery {
                 look,
                 state: GalleryState::default(),
