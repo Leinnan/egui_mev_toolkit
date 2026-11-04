@@ -1,0 +1,47 @@
+[package]
+name = "egui_mev_widgets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "Themed egui controls: buttons, containers, form rows, navigation, text fitting, dialogs and toasts"
+
+[lib]
+doctest = false
+
+[features]
+default = []
+# `AutoCompleteTextEdit`, a text field with a fuzzy completion popup.
+autocomplete = ["dep:fuzzy-matcher"]
+# `SearchPicker`, a dropdown with search, a category rail, favorites and recents.
+picker = ["egui_mev_theme/lucide", "dep:lucide-icons"]
+# `PickerMemory` can be saved with an app's settings.
+serde = ["dep:serde"]
+
+[dependencies]
+egui.workspace = true
+egui_mev_core = { path = "../egui_mev_core" }
+egui_mev_theme = { path = "../egui_mev_theme" }
+foldhash = "0.2"
+fuzzy-matcher = { version = "0.3", optional = true }
+lru.workspace = true
+lucide-icons = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+eframe = { workspace = true, features = ["glow", "default_fonts", "wayland"] }
+egui = { workspace = true, features = ["default_fonts"] }
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+egui_mev_test = { path = "../egui_mev_test" }
+egui_mev_theme = { path = "../egui_mev_theme", features = ["default_fonts", "lucide"] }
+lucide-icons = { workspace = true }
+
+# Its snapshots show every widget, so they only match with every widget built.
+[[test]]
+name = "gallery"
+required-features = ["autocomplete", "picker"]
+
+[lints]
+workspace = true

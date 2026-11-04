@@ -1,0 +1,19 @@
+[package]
+name = "egui_mev_tasks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "Worker-to-UI plumbing for egui apps: repaint waker, event channel, latest-value mailbox, keyed background worker, poller"
+
+[lib]
+doctest = false
+
+[dependencies]
+egui.workspace = true
+web-time.workspace = true
+
+[lints]
+workspace = true

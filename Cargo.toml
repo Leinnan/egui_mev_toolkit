@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# egui 0.37's minimum, which is also what the apps on 0.37 declare.
+rust-version = "1.95"
+authors = ["Piotr Siuszko"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Leinnan/egui_mev_toolkit"
+publish = false
+# Snapshot images are for this repository's tests, and they're large.
+exclude = ["tests/snapshots"]
+
+[workspace.dependencies]
+# No default features: each crate lists the minimum it needs, and the app picks
+# fonts and renderers (`docs/crate-rules.md`).
+egui = { version = "0.37", default-features = false }
+eframe = { version = "0.37", default-features = false }
+egui_kittest = { version = "0.37", default-features = false }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lru = "0.16"
+web-time = "1"
+lucide-icons = { version = "1.66", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Registry", "Win32_UI_Controls"] }
+
+[workspace.lints.clippy]
+# Widgets take their look and state as plain arguments.
+too_many_arguments = "allow"
+
+# Our crates quick to rebuild, dependencies fast at run time.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = "line-tables-only"

@@ -1,0 +1,71 @@
+[package]
+name = "egui_mev_app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "An egui app shell: window drag, sidebar auto-collapse, startup timing, paths, settings files, log viewer, and eframe presets"
+
+[lib]
+doctest = false
+
+[features]
+default = []
+# `Settings<T>` stored as TOML.
+toml = ["dep:serde", "dep:toml"]
+# `Settings<T>` stored as JSON.
+json = ["dep:serde", "dep:serde_json"]
+# `native`: window icon and native-option presets. eframe comes with no
+# renderer, so the app still picks glow or wgpu by enabling it on its own eframe.
+# eframe itself doesn't build without one, so neither does this feature alone.
+eframe = ["dep:eframe"]
+# `gpu`: per-OS wgpu backends and the present-mode override.
+wgpu = ["eframe", "eframe/wgpu_no_default_features", "dep:wgpu"]
+# `dialogs`: rfd wrappers with a test double. Native targets only.
+dialogs = ["dep:rfd", "dep:raw-window-handle"]
+
+[dependencies]
+egui.workspace = true
+egui_mev_core = { path = "../egui_mev_core" }
+egui_mev_theme = { path = "../egui_mev_theme" }
+log = "0.4"
+web-time.workspace = true
+
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+toml = { version = "1", optional = true }
+
+eframe = { workspace = true, optional = true }
+# Backends and their shader translators are the bulk of the renderer's size, so
+# each OS only gets the one it uses; see the target sections below. The major
+# version must be the one eframe 0.37 uses.
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+directories = "6"
+rfd = { version = "0.17", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["metal"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["dx12"], optional = true }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["vulkan", "gles"], optional = true }
+
+# winit doesn't build on these without a window system, and every app here picks
+# Wayland. An app that also wants X11 enables it on its own eframe.
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+eframe = { workspace = true, optional = true, features = ["wayland"] }
+
+[dev-dependencies]
+egui = { workspace = true, features = ["default_fonts"] }
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+serde = { workspace = true }
+
+[lints]
+workspace = true

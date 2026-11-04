@@ -1,0 +1,13 @@
+# egui_kittest snapshot configuration.
+#
+# Tolerate small cross-machine rasterization drift. Real layout regressions
+# differ by thousands of pixels, so a tight threshold still catches them.
+max_failed_pixels = 50
+
+[mac]
+# macOS font rendering is stable across machines; keep the margin tight.
+max_failed_pixels = 30
+
+[linux]
+# Linux font rasterizer output varies more across distros/fontconfig versions.
+max_failed_pixels = 120

@@ -1,0 +1,39 @@
+[package]
+name = "egui_mev_theme"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "A shared egui look: role-named palette, sizing metrics, light and dark installation, fonts and icon glyphs"
+
+[lib]
+doctest = false
+
+[features]
+default = []
+# egui's built-in fonts, as the base of the font chain.
+default_fonts = ["egui/default_fonts"]
+# `glyph(lucide_icons::Icon)` and `IconFont::Lucide`.
+lucide = ["dep:lucide-icons"]
+# Bundles Roboto Condensed as `fonts::ROBOTO_CONDENSED`.
+roboto = []
+# Fluent (WinUI 3) palettes and style, plus Mica and window chrome on Windows.
+fluent = ["dep:raw-window-handle", "dep:windows-sys"]
+serde = ["dep:serde"]
+
+[dependencies]
+egui.workspace = true
+lucide-icons = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = { version = "0.6", optional = true }
+windows-sys = { workspace = true, optional = true }
+
+[dev-dependencies]
+egui = { workspace = true, features = ["default_fonts"] }
+
+[lints]
+workspace = true

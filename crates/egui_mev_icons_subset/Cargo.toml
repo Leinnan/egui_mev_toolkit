@@ -1,0 +1,24 @@
+[package]
+name = "egui_mev_icons_subset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "Cuts the Lucide icon font down to the icons a project's Rust sources name"
+
+[[bin]]
+name = "egui-mev-icons-subset"
+path = "src/main.rs"
+
+[dependencies]
+lucide-icons.workspace = true
+subsetter = "0.2"
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+egui = { workspace = true, features = ["default_fonts"] }
+
+[lints]
+workspace = true

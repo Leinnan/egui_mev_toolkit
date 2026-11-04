@@ -1,0 +1,4 @@
+# Written next to a snapshot when a comparison fails.
+*.new.png
+*.diff.png
+*.old.png

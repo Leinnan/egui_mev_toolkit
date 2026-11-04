@@ -1,0 +1,52 @@
+[package]
+name = "egui_mev_inspect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "Reflect-driven egui editor over bevy_reflect, without the bevy crate: structs, enums, lists and maps, plus an optional config file editor"
+
+[lib]
+doctest = false
+
+[features]
+default = []
+serde = ["dep:serde"]
+# `config`: a config file editor with undo and redo, in TOML.
+configs = ["serde", "dep:egui_mev_core", "dep:toml"]
+# Config files in JSON instead of TOML.
+configs_json = ["configs", "dep:serde_json"]
+# `create_registry` also registers every `#[derive(Reflect)]` type in the binary.
+# Without it, register your types on the registry, so that lists and enums can
+# build default values for them.
+auto_register = ["bevy_reflect/auto_register_inventory"]
+
+[dependencies]
+# `reflect_documentation` keeps doc comments for the field tooltips.
+bevy_reflect = { version = "0.20", default-features = false, features = ["std", "reflect_documentation"] }
+egui.workspace = true
+egui_mev_core = { path = "../egui_mev_core", optional = true }
+egui_mev_theme = { path = "../egui_mev_theme" }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+toml = { version = "1", optional = true }
+
+[dev-dependencies]
+# Only for the example's window: no crate here requires a renderer.
+eframe = { workspace = true, features = ["default_fonts", "wayland", "wgpu", "x11"] }
+egui = { workspace = true, features = ["default_fonts"] }
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+serde.workspace = true
+
+[[example]]
+name = "config"
+required-features = ["configs"]
+
+[[test]]
+name = "config"
+required-features = ["configs"]
+
+[lints]
+workspace = true

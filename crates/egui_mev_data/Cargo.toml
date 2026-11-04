@@ -1,0 +1,29 @@
+[package]
+name = "egui_mev_data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "Forms and tables described as data for egui: validation, conditions, sorting, filtering and rows that return the app's own value"
+
+[lib]
+doctest = false
+
+[dependencies]
+egui.workspace = true
+egui_mev_core = { path = "../egui_mev_core" }
+egui_mev_theme = { path = "../egui_mev_theme" }
+egui_mev_widgets = { path = "../egui_mev_widgets" }
+serde.workspace = true
+serde_json.workspace = true
+web-time.workspace = true
+
+[dev-dependencies]
+egui = { workspace = true, features = ["default_fonts"] }
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+egui_mev_test = { path = "../egui_mev_test" }
+
+[lints]
+workspace = true

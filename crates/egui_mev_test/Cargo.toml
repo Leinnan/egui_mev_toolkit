@@ -1,0 +1,21 @@
+[package]
+name = "egui_mev_test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "egui_kittest helpers: snapshot options and lock, settling and dragging, step-counting walks, golden hashes, themed harness setup"
+
+[lib]
+doctest = false
+
+[dependencies]
+egui.workspace = true
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+# Snapshot fonts come from egui's built-ins, which `fonts::install_test` builds on.
+egui_mev_theme = { path = "../egui_mev_theme", features = ["default_fonts"] }
+
+[lints]
+workspace = true

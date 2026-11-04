@@ -1,0 +1,53 @@
+[package]
+name = "egui_mev_commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "App commands for egui: shortcuts, keymaps, saved key overrides, a per-context queue, menus (egui and native macOS), a command palette and key help"
+
+[lib]
+doctest = false
+
+[features]
+default = []
+# `NativeMenuBar`, the macOS menu bar built from the same `Menu` table. Elsewhere
+# it adds nothing: no native menu type, and no muda or GTK in the tree.
+native_menu = ["dep:muda", "dep:arboard"]
+# `KeyOverrides` can be saved with an app's settings.
+serde = ["dep:serde"]
+
+[dependencies]
+egui.workspace = true
+egui_mev_theme = { path = "../egui_mev_theme" }
+egui_mev_widgets = { path = "../egui_mev_widgets" }
+fuzzy-matcher = "0.3"
+serde = { workspace = true, optional = true }
+
+# macOS only. muda's default feature is GTK for Linux, which nothing here wants,
+# and arboard's are image support and Wayland, which paste doesn't use.
+[target.'cfg(target_os = "macos")'.dependencies]
+arboard = { version = "3", default-features = false, optional = true }
+muda = { version = "0.21", default-features = false, optional = true }
+
+[dev-dependencies]
+# Only for the example's window: no crate here requires a renderer.
+eframe = { workspace = true, features = ["glow", "default_fonts", "wayland"] }
+egui = { workspace = true, features = ["default_fonts"] }
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+egui_mev_test = { path = "../egui_mev_test" }
+
+[[example]]
+name = "native_menu"
+required-features = ["native_menu"]
+
+# AppKit objects can only be made on the main thread, which libtest doesn't use.
+[[test]]
+name = "native_menu_main_thread"
+harness = false
+required-features = ["native_menu"]
+
+[lints]
+workspace = true

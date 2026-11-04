@@ -1,0 +1,20 @@
+[package]
+name = "egui_mev_core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+exclude.workspace = true
+description = "Logic shared by egui apps, with no egui: undo history, atomic files, weighted LRU, list selection, splines"
+
+[lib]
+doctest = false
+
+[dependencies]
+fixedbitset = "0.5"
+lru = { workspace = true }
+web-time = { workspace = true }
+
+[lints]
+workspace = true
