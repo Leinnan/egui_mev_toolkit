@@ -99,6 +99,10 @@ This rewrites `Cargo.lock`. Restore it before committing, then pin the new rev.
 
 `clippy` and `nextest` are external subcommands, so cargo ignores a `--config` placed before them and silently builds the pinned rev. Put it after: `cargo clippy --config "$config"`, `cargo nextest run --config "$config"`.
 
+## Breaking changes
+
+- **`PickerIcon` and `PickerItem` have a lifetime**, so a thumbnail resolver can borrow app state for the frame. A signature naming them changes: `fn items() -> Vec<PickerItem>` becomes `Vec<PickerItem<'static>>`, or `<'_>` when it borrows. Code that only builds them doesn't change.
+
 ## Coming from egui 0.36 code
 
 - `Id::new` is deprecated: use `Id::unique` where the id must be stable and unique across the app.

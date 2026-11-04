@@ -105,20 +105,21 @@ impl PickerMemory {
 
 /// What a row or the closed control shows.
 #[derive(Clone)]
-pub enum PickerIcon {
+pub enum PickerIcon<'a> {
     /// A glyph, drawn in the row's colour.
     Glyph(Glyph),
     /// A picture. `resolve` runs only for rows in view, so it can load lazily; the
-    /// row shows `fallback` until it returns a texture.
+    /// row shows `fallback` until it returns a texture. It may borrow for the frame:
+    /// to share a `&mut dyn FnMut` between rows, put it in a `RefCell`.
     Texture {
         /// The texture, once it exists.
-        resolve: Rc<dyn Fn() -> Option<TextureId>>,
+        resolve: Rc<dyn Fn() -> Option<TextureId> + 'a>,
         /// Shown while there is no texture.
         fallback: Glyph,
     },
 }
 
-impl PickerIcon {
+impl<'a> PickerIcon<'a> {
     /// A picture that is already loaded.
     #[must_use]
     pub fn texture(texture: TextureId, fallback: impl Into<Glyph>) -> Self {
@@ -149,7 +150,7 @@ impl PickerIcon {
     }
 }
 
-impl fmt::Debug for PickerIcon {
+impl fmt::Debug for PickerIcon<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Glyph(glyph) => f.debug_tuple("Glyph").field(glyph).finish(),
@@ -161,7 +162,7 @@ impl fmt::Debug for PickerIcon {
     }
 }
 
-impl<T: Into<Glyph>> From<T> for PickerIcon {
+impl<T: Into<Glyph>> From<T> for PickerIcon<'_> {
     fn from(glyph: T) -> Self {
         Self::Glyph(glyph.into())
     }
@@ -189,7 +190,7 @@ impl PickerCategory {
 
 /// One entry in the list.
 #[derive(Clone, Debug)]
-pub struct PickerItem {
+pub struct PickerItem<'a> {
     /// Stable identifier, returned when picked.
     pub id: String,
     /// Name shown in the list.
@@ -197,7 +198,7 @@ pub struct PickerItem {
     /// Index into the picker's categories.
     pub category: Option<usize>,
     /// The row's picture.
-    pub icon: PickerIcon,
+    pub icon: PickerIcon<'a>,
     /// Colour of a glyph icon; the weak text colour when `None`.
     pub color: Option<Color32>,
     /// Extra words search should find this entry by.
@@ -212,13 +213,13 @@ pub struct PickerItem {
     pub tooltip: Option<String>,
 }
 
-impl PickerItem {
+impl<'a> PickerItem<'a> {
     /// An entry with the given id, label and icon.
     #[must_use]
     pub fn new(
         id: impl Into<String>,
         label: impl Into<String>,
-        icon: impl Into<PickerIcon>,
+        icon: impl Into<PickerIcon<'a>>,
     ) -> Self {
         Self {
             id: id.into(),
@@ -310,7 +311,7 @@ pub struct SearchPicker<'a> {
     name: &'a str,
     hint: &'a str,
     selected_label: &'a str,
-    selected_icon: PickerIcon,
+    selected_icon: PickerIcon<'a>,
     selected_color: Option<Color32>,
     selected_id: &'a str,
     categories: &'a [PickerCategory],
@@ -329,7 +330,7 @@ impl<'a> SearchPicker<'a> {
         id_salt: impl AsIdSalt,
         name: &'a str,
         selected_label: &'a str,
-        selected_icon: impl Into<PickerIcon>,
+        selected_icon: impl Into<PickerIcon<'a>>,
     ) -> Self {
         Self {
             id_salt: egui::IdSalt::new(id_salt),
@@ -440,7 +441,7 @@ struct RowList {
 }
 
 /// How well an item matches; `None` when some search term isn't found.
-fn match_score(item: &PickerItem, category: &str, query: &str) -> Option<u32> {
+fn match_score(item: &PickerItem<'_>, category: &str, query: &str) -> Option<u32> {
     let label = item.label.to_lowercase();
     let query = query.trim().to_lowercase();
     let haystack = format!(
@@ -465,7 +466,7 @@ fn match_score(item: &PickerItem, category: &str, query: &str) -> Option<u32> {
     })
 }
 
-fn items_by_ids(items: &[PickerItem], ids: &[String]) -> Vec<usize> {
+fn items_by_ids(items: &[PickerItem<'_>], ids: &[String]) -> Vec<usize> {
     let positions: HashMap<&str, usize> = items
         .iter()
         .enumerate()
@@ -477,7 +478,7 @@ fn items_by_ids(items: &[PickerItem], ids: &[String]) -> Vec<usize> {
 }
 
 fn search_rows(
-    items: &[PickerItem],
+    items: &[PickerItem<'_>],
     categories: &[PickerCategory],
     query: &str,
     only_category: Option<usize>,
@@ -503,7 +504,7 @@ fn search_rows(
 
 /// The rows to list for a query and rail position.
 fn build_rows(
-    items: &[PickerItem],
+    items: &[PickerItem<'_>],
     categories: &[PickerCategory],
     query: &str,
     rail: Rail,
@@ -612,11 +613,11 @@ pub fn thumbnails_visible(ctx: &Context) -> bool {
 
 impl SearchPicker<'_> {
     /// Show the control and, when open, the list from `items`.
-    pub fn show(
+    pub fn show<'i>(
         self,
         ui: &mut Ui,
         memory: &PickerMemory,
-        items: impl FnOnce() -> Vec<PickerItem>,
+        items: impl FnOnce() -> Vec<PickerItem<'i>>,
     ) -> Option<Picked> {
         let response = self.closed_control(ui);
         let ctx = ui.ctx().clone();
@@ -756,7 +757,7 @@ impl SearchPicker<'_> {
         ui: &mut Ui,
         state: &mut PickerState,
         memory: &PickerMemory,
-        items: &[PickerItem],
+        items: &[PickerItem<'_>],
         height: f32,
     ) -> Option<Picked> {
         let p = Palette::of(ui);
@@ -905,7 +906,7 @@ impl SearchPicker<'_> {
         &self,
         ui: &mut Ui,
         state: &mut PickerState,
-        items: &[PickerItem],
+        items: &[PickerItem<'_>],
         favorites: &[String],
         recents: &[String],
     ) {
@@ -960,7 +961,7 @@ impl SearchPicker<'_> {
         state: &mut PickerState,
         list: &RowList,
         memory: &PickerMemory,
-        items: &[PickerItem],
+        items: &[PickerItem<'_>],
         height: f32,
     ) -> Option<Picked> {
         let p = Palette::of(ui);
@@ -1075,7 +1076,7 @@ impl SearchPicker<'_> {
         ui: &mut Ui,
         rect: Rect,
         id: Id,
-        item: &PickerItem,
+        item: &PickerItem<'_>,
         highlighted: bool,
         favorite: bool,
     ) -> Option<Picked> {
@@ -1257,7 +1258,7 @@ fn rail_row(ui: &mut Ui, icon: &Glyph, label: &str, count: usize, selected: bool
 }
 
 /// The picture following the pointer during a drag.
-fn paint_drag_ghost(ui: &Ui, item: &PickerItem) {
+fn paint_drag_ghost(ui: &Ui, item: &PickerItem<'_>) {
     let Some(pointer) = ui.ctx().pointer_latest_pos() else {
         return;
     };
@@ -1298,7 +1299,7 @@ mod tests {
 
     use super::*;
 
-    fn item(id: &str, label: &str, category: Option<usize>, keywords: &str) -> PickerItem {
+    fn item(id: &str, label: &str, category: Option<usize>, keywords: &str) -> PickerItem<'static> {
         PickerItem {
             category,
             keywords: keywords.to_owned(),
@@ -1313,7 +1314,7 @@ mod tests {
         ]
     }
 
-    fn items() -> Vec<PickerItem> {
+    fn items() -> Vec<PickerItem<'static>> {
         vec![
             item("cpu", "CPU Usage", Some(0), "processor"),
             item("mem", "Memory Usage", Some(0), "ram"),
@@ -1723,5 +1724,58 @@ mod tests {
         assert_eq!(payload.id, "clock");
         harness.drop_at(from + Vec2::new(40.0, 40.0));
         egui_mev_test::settle(&mut harness);
+    }
+
+    /// A resolver can borrow what it needs for the frame, like a `&mut` cache.
+    #[test]
+    fn a_borrowed_resolver_runs_only_for_rows_in_view() {
+        let resolved = Rc::new(std::cell::RefCell::new(Vec::<usize>::new()));
+        let log = Rc::clone(&resolved);
+        let mut harness = Harness::builder()
+            .with_size([500.0, 500.0])
+            .with_context_setup(|ctx| {
+                egui_mev_test::install_with(
+                    ctx,
+                    Theme::default(),
+                    &FontOptions {
+                        icons: vec![IconFont::Lucide],
+                        ..Default::default()
+                    },
+                );
+            })
+            .build_ui(move |ui| {
+                let mut this_frame = Vec::new();
+                let mut resolve = |index: usize| -> Option<TextureId> {
+                    this_frame.push(index);
+                    None
+                };
+                let resolve = std::cell::RefCell::new(&mut resolve);
+                let resolve = &resolve;
+                let _ = SearchPicker::new("picker", "Big", "None", 'x').show(
+                    ui,
+                    &PickerMemory::default(),
+                    || {
+                        (0..500)
+                            .map(|index| {
+                                PickerItem::new(
+                                    index.to_string(),
+                                    format!("Row {index}"),
+                                    PickerIcon::Texture {
+                                        resolve: Rc::new(move || (resolve.borrow_mut())(index)),
+                                        fallback: Glyph::new('x'),
+                                    },
+                                )
+                            })
+                            .collect()
+                    },
+                );
+                log.borrow_mut().append(&mut this_frame);
+            });
+        harness.run();
+        assert!(resolved.borrow().is_empty());
+        harness.get_by_label("Big").click();
+        harness.run();
+        let highest = resolved.borrow().iter().copied().max().unwrap();
+        assert!(highest < 50, "row {highest} is far out of view");
     }
 }
