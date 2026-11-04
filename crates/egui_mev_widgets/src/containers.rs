@@ -167,22 +167,31 @@ pub fn collapsible<R>(
 
 /// A status pill: a filled status dot plus a muted label inside a rounded
 /// translucent pill. Returns the pill's response, for tooltips.
+///
+/// It's painted at a size of its own: `ui.horizontal` would reverse it in a
+/// right-to-left parent, and reserve the height of a control.
 pub fn pill(ui: &mut Ui, label: &str, dot: Color32) -> Response {
+    const MARGIN: Vec2 = Vec2::new(8.0, 2.0);
+    const DOT: f32 = 8.0;
+    const GAP: f32 = 6.0;
+
     let p = Palette::of(ui);
-    let caption = Metrics::of(ui).caption;
-    Frame::new()
-        .fill(p.border_subtle)
-        .corner_radius(CornerRadius::same(9))
-        .inner_margin(Margin::symmetric(8, 2))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
-                ui.painter().circle_filled(rect.center(), 4.0, dot);
-                ui.label(RichText::new(label).size(caption).color(p.text_weak));
-            });
-        })
-        .response
+    let font = FontId::proportional(Metrics::of(ui).caption);
+    let galley = ui.fonts_mut(|fonts| fonts.layout_no_wrap(label.to_owned(), font, p.text_weak));
+    let content = Vec2::new(DOT + GAP + galley.size().x, galley.size().y.max(DOT));
+    let (rect, response) = ui.allocate_exact_size(content + MARGIN * 2.0, Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, true, label));
+
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(9), p.border_subtle);
+    let left = rect.left_center() + Vec2::new(MARGIN.x, 0.0);
+    painter.circle_filled(left + Vec2::new(DOT / 2.0, 0.0), DOT / 2.0, dot);
+    painter.galley(
+        left + Vec2::new(DOT + GAP, -galley.size().y / 2.0),
+        galley,
+        p.text_weak,
+    );
+    response
 }
 
 /// Severity of a [`banner`].
@@ -317,6 +326,65 @@ mod tests {
             assert!(harness.query_by_label(shown).is_some(), "{family:?}");
             assert!(harness.query_by_label(hidden).is_none(), "{family:?}");
         }
+    }
+
+    /// `x` of the pill's dot and label, and its size, in `layout`.
+    fn pill_in(layout: egui::Layout, family: ThemeFamily) -> (f32, f32, Vec2) {
+        let ctx = crate::test_support::themed_family(family, egui::Theme::Dark);
+        let mut size = Vec2::ZERO;
+        let output = crate::test_support::frame_output(&ctx, 0.0, Vec::new(), |ui| {
+            ui.with_layout(layout, |ui| {
+                size = pill(ui, "Connected", Color32::GREEN).rect.size();
+            });
+        });
+        let (mut dot, mut label) = (None, None);
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::Circle(circle) => dot = Some(circle.center.x),
+                egui::Shape::Text(text) => label = Some(text.pos.x),
+                _ => {}
+            }
+        }
+        (dot.expect("a dot"), label.expect("a label"), size)
+    }
+
+    #[test]
+    fn a_pill_reads_the_same_way_in_any_layout() {
+        for family in [ThemeFamily::Graphite, ThemeFamily::Fluent] {
+            let (dot, label, size) = pill_in(egui::Layout::left_to_right(Align::Center), family);
+            assert!(dot < label, "{family:?}");
+            let (dot, label, reversed) =
+                pill_in(egui::Layout::right_to_left(Align::Center), family);
+            assert!(dot < label, "{family:?} right to left");
+            assert_eq!(size, reversed, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_pill_is_as_tall_as_its_text_not_as_a_control() {
+        let ctx = crate::test_support::themed_family(ThemeFamily::Fluent, egui::Theme::Dark);
+        let mut height = 0.0;
+        crate::test_support::frame_at(&ctx, 0.0, Vec::new(), |ui| {
+            height = pill(ui, "Connected", Color32::GREEN).rect.height();
+        });
+        assert!(height < Metrics::FLUENT.interact_height, "{height}");
+    }
+
+    #[test]
+    fn a_pill_can_be_found_by_its_label() {
+        let mut harness = Harness::builder()
+            .with_size([300.0, 80.0])
+            .with_context_setup(|ctx| {
+                egui_mev_test::install(
+                    ctx,
+                    crate::test_support::family_theme(ThemeFamily::Graphite),
+                );
+            })
+            .build_ui(|ui| {
+                pill(ui, "Connected", Color32::GREEN);
+            });
+        harness.run();
+        assert!(harness.query_by_label("Connected").is_some());
     }
 
     #[test]
