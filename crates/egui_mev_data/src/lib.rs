@@ -9,10 +9,10 @@ pub mod form;
 pub mod table;
 
 pub use form::{
-    ChoiceOption, Condition, FieldDef, FieldType, Form, FormState, Outcome, PathMode, Values,
-    format_time, parse_time,
+    ChoiceOption, Condition, FieldDef, FieldType, Form, FormState, Outcome, PathMode, PathRow,
+    SubmitVariant, Values, format_time, parse_time,
 };
 pub use table::{
-    Cell, ColumnDef, ColumnKind, RowAction, RowClick, RowDef, RowUpdate, SizeFilter, SizeUnit,
-    SortDef, SortOrder, TableSpec, TableView,
+    Cell, ColumnDef, ColumnKind, RowAction, RowClick, RowDef, RowStatus, RowUpdate, SizeFilter,
+    SizeUnit, SortDef, SortOrder, TableLabels, TableSpec, TableView,
 };

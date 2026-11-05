@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use egui::{Id, Key, Margin, RichText, Ui};
 use egui_mev_theme::{Metrics, Palette};
-use egui_mev_widgets::{DialogButton, dialog_buttons, text_field};
+use egui_mev_widgets::{ButtonKind, DialogButton, card_frame, dialog_buttons, text_field};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -24,6 +24,15 @@ pub struct Form {
     pub title: Option<String>,
     /// The submit button's text.
     pub submit: Option<String>,
+    /// Draw the submit button as a destructive action.
+    #[serde(default)]
+    pub danger: bool,
+    /// Conditional submit labels and styles; the first matching entry wins.
+    #[serde(default)]
+    pub submit_when: Vec<SubmitVariant>,
+    /// Show only Close, without allowing submission.
+    #[serde(default)]
+    pub blocked: bool,
     /// Start from the values used last time.
     #[serde(default)]
     pub remember: bool,
@@ -32,12 +41,32 @@ pub struct Form {
     pub fields: Vec<FieldDef>,
 }
 
+/// The submit button while a condition holds; the first that does wins.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitVariant {
+    pub when: Condition,
+    pub label: String,
+    #[serde(default)]
+    pub danger: bool,
+}
+
+/// One line of a `paths` field.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathRow {
+    pub path: String,
+    pub size: Option<String>,
+}
+
 /// What a field is, which decides how it draws and what value it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldType {
     /// Read-only text.
     Info,
+    /// Read-only paths with optional sizes.
+    Paths,
     /// A line between fields.
     Separator,
     /// A labelled box around `fields`.
@@ -67,7 +96,10 @@ impl FieldType {
     /// Whether the field holds a value (and so needs an id).
     #[must_use]
     pub const fn is_input(self) -> bool {
-        !matches!(self, Self::Info | Self::Separator | Self::Group)
+        !matches!(
+            self,
+            Self::Info | Self::Paths | Self::Separator | Self::Group
+        )
     }
 }
 
@@ -175,6 +207,9 @@ pub struct FieldDef {
     pub label: Option<String>,
     /// For `info`: the text shown.
     pub text: Option<String>,
+    /// Rows of a read-only `paths` field.
+    #[serde(default)]
+    pub rows: Vec<PathRow>,
     /// The starting value.
     pub default: Option<Value>,
     /// Text must not be blank while the field is visible and enabled.
@@ -251,7 +286,9 @@ impl FieldDef {
                 .first()
                 .map_or(Value::Null, |option| Value::from(option.value())),
             FieldType::Text | FieldType::Multiline | FieldType::Path => Value::from(""),
-            FieldType::Info | FieldType::Separator | FieldType::Group => Value::Null,
+            FieldType::Info | FieldType::Paths | FieldType::Separator | FieldType::Group => {
+                Value::Null
+            }
         }
     }
 
@@ -302,7 +339,9 @@ impl FieldDef {
                 Value::Number(number) => Ok(Value::String(number.to_string())),
                 _ => Err("must be text".into()),
             },
-            FieldType::Info | FieldType::Separator | FieldType::Group => Ok(Value::Null),
+            FieldType::Info | FieldType::Paths | FieldType::Separator | FieldType::Group => {
+                Ok(Value::Null)
+            }
         }
     }
 
@@ -542,6 +581,75 @@ pub struct FormState {
     pub busy: bool,
 }
 
+/// The `paths` field: each path on the left, its size lined up on the right.
+fn paths_ui(ui: &mut egui::Ui, rows: &[PathRow]) {
+    card_frame(ui).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let height = ui.spacing().interact_size.y;
+        for row in rows {
+            // A set height: a right-to-left layout would take all there is.
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), height),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    if let Some(size) = &row.size {
+                        ui.strong(size);
+                    }
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(egui::Label::new(row.path.as_str()).truncate())
+                                .on_hover_text(row.path.as_str());
+                        },
+                    );
+                },
+            );
+        }
+    });
+}
+
+/// A segmented choice (a radio group) of text labels: one of `choices`
+/// (label, enabled, tooltip) is on. Returns the newly clicked one.
+fn segmented_text(
+    ui: &mut egui::Ui,
+    choices: &[(&str, bool, &str)],
+    selected: usize,
+) -> Option<usize> {
+    let mut next = None;
+    // In a right-aligned row the buttons are laid out right to left, so add
+    // them last first to keep them reading left to right.
+    let mut order: Vec<usize> = (0..choices.len()).collect();
+    if ui.layout().prefer_right_to_left() {
+        order.reverse();
+    }
+    egui::Frame::new()
+        .fill(Palette::of(ui).card_bg)
+        .corner_radius(Metrics::of(ui).control_radius)
+        .inner_margin(2)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for index in order {
+                    let (label, enabled, tip) = choices[index];
+                    let on = index == selected;
+                    let mut response = ui.add_enabled(enabled, egui::Button::selectable(on, label));
+                    if !tip.is_empty() {
+                        response = response.on_hover_text(tip).on_disabled_hover_text(tip);
+                    }
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(egui::Role::RadioButton, enabled, on, label)
+                    });
+                    if response.clicked() && !on {
+                        next = Some(index);
+                    }
+                }
+            });
+        });
+    next
+}
+
 impl FormState {
     /// Opens `form` with its starting values.
     #[must_use]
@@ -567,7 +675,49 @@ impl FormState {
         self.form.fields = fields;
     }
 
-    fn message_ui(&self, ui: &mut Ui) {
+    /// Draws the fields in one row, for a toolbar: radio fields as segmented
+    /// buttons, which need no label of their own.
+    pub fn toolbar_ui(&mut self, ui: &mut egui::Ui) {
+        let fields = std::mem::take(&mut self.form.fields);
+        for field in &fields {
+            if !field.visible(&self.values) {
+                continue;
+            }
+            if field.kind == FieldType::Radio {
+                let current = self
+                    .values
+                    .get(field.id())
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let selected = field
+                    .options
+                    .iter()
+                    .position(|option| option.value() == current)
+                    .unwrap_or(0);
+                let tip = field.help.as_deref().unwrap_or_default();
+                let choices: Vec<(&str, bool, &str)> = field
+                    .options
+                    .iter()
+                    .map(|option| (option.label(), field.enabled(&self.values), tip))
+                    .collect();
+                if let Some(index) = segmented_text(ui, &choices, selected) {
+                    self.values.insert(
+                        field.id().to_owned(),
+                        Value::from(field.options[index].value()),
+                    );
+                }
+            } else if field.kind.is_input() {
+                let label = ui.label(field.label());
+                ui.add_enabled_ui(field.enabled(&self.values), |ui| {
+                    self.input_ui(ui, field, label.id);
+                });
+            }
+        }
+        self.form.fields = fields;
+    }
+
+    /// Draws the current form message, if any.
+    pub fn message_ui(&self, ui: &mut Ui) {
         if let Some(message) = &self.message {
             ui.colored_label(Palette::of(ui).critical, message);
         }
@@ -578,6 +728,30 @@ impl FormState {
     pub fn fields_only(&mut self, ui: &mut Ui) {
         self.grid_ui(ui);
         self.message_ui(ui);
+    }
+
+    /// The submit button's text and kind for the values now.
+    fn submit_button(&self) -> (String, ButtonKind) {
+        let kind = |danger: bool| {
+            if danger {
+                ButtonKind::Danger
+            } else {
+                ButtonKind::Primary
+            }
+        };
+        self.form
+            .submit_when
+            .iter()
+            .find(|variant| variant.when.holds(&self.values))
+            .map_or_else(
+                || {
+                    (
+                        self.form.submit.clone().unwrap_or_else(|| "Run".into()),
+                        kind(self.form.danger),
+                    )
+                },
+                |variant| (variant.label.clone(), kind(variant.danger)),
+            )
     }
 
     /// Draws the dialog's fields and buttons.
@@ -598,25 +772,34 @@ impl FormState {
             .show(ui, |ui| self.grid_ui(ui));
         self.message_ui(ui);
         ui.separator();
-        let submit = self.form.submit.clone().unwrap_or_else(|| "Run".into());
+        let (submit, kind) = self.submit_button();
         let clicked = ui
             .horizontal(|ui| {
                 if self.busy {
                     ui.spinner();
                 }
-                dialog_buttons(
-                    ui,
-                    false,
-                    &[
-                        DialogButton::primary(&submit).enabled(!self.busy),
-                        DialogButton::plain("Cancel"),
-                    ],
-                )
+                if self.form.blocked {
+                    dialog_buttons(ui, false, &[DialogButton::plain("Close")]).map(|_| 1)
+                } else {
+                    dialog_buttons(
+                        ui,
+                        false,
+                        &[
+                            DialogButton {
+                                label: &submit,
+                                kind,
+                                enabled: !self.busy,
+                            },
+                            DialogButton::plain("Cancel"),
+                        ],
+                    )
+                }
             })
             .inner;
         // A focused control takes Enter for itself; a text field gives up its
         // focus on Enter, so that one still submits.
-        let enter = !popup_open
+        let enter = !self.form.blocked
+            && !popup_open
             && !self.busy
             && ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift)
             && ui.memory(|memory| memory.focused().is_none());
@@ -645,6 +828,11 @@ impl FormState {
                         ui.add(egui::Label::new(RichText::new(text).color(p.text_weak)).wrap());
                         ui.end_row();
                     }
+                }
+                FieldType::Paths => {
+                    ui.label("");
+                    paths_ui(ui, &field.rows);
+                    ui.end_row();
                 }
                 FieldType::Separator => {
                     ui.separator();
@@ -827,7 +1015,7 @@ impl FormState {
                 }
                 result
             }
-            FieldType::Info | FieldType::Separator | FieldType::Group => None,
+            FieldType::Info | FieldType::Paths | FieldType::Separator | FieldType::Group => None,
         };
         if let Some(value) = changed {
             if field.kind != FieldType::Time {

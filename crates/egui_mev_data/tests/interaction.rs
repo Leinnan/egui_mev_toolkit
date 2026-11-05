@@ -590,6 +590,10 @@ fn the_context_menu_asks_for_each_thing_with_the_payload() {
             "Remove",
             RowClick::Action {
                 action: "remove".to_owned(),
+                item: serde_json::from_value(
+                    json!({ "label": "Remove", "action": "remove", "danger": true }),
+                )
+                .expect("action"),
                 payload: track("A", 2),
             },
         ),

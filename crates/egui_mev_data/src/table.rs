@@ -89,6 +89,60 @@ pub struct RowAction {
     /// Draw it as a warning: it removes something.
     #[serde(default)]
     pub danger: bool,
+    /// Status while the action runs.
+    pub busy: Option<String>,
+    /// Title while the app prepares a confirmation.
+    pub title: Option<String>,
+}
+
+/// What is happening to a row because of its menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowStatus {
+    /// Queued behind another job.
+    Waiting,
+    /// The action is running, with what the entry said it does.
+    Working(String),
+    /// Done, and new values are on their way.
+    Measuring,
+    /// It failed, for this reason. The sizes are unchanged.
+    Failed(String),
+}
+
+impl RowStatus {
+    const fn is_busy(&self) -> bool {
+        !matches!(self, Self::Failed(_))
+    }
+
+    fn text(&self) -> &str {
+        match self {
+            Self::Waiting => "Waiting…",
+            Self::Working(text) => text,
+            Self::Measuring => "Measuring…",
+            Self::Failed(_) => "Failed",
+        }
+    }
+}
+
+/// App-specific text for the built-in row menu entries.
+#[derive(Debug, Clone)]
+pub struct TableLabels {
+    pub open: String,
+    pub refresh: String,
+    pub copy: String,
+    pub job_running: String,
+    pub row_busy: String,
+}
+
+impl Default for TableLabels {
+    fn default() -> Self {
+        Self {
+            open: "Open".into(),
+            refresh: "Refresh".into(),
+            copy: "Copy".into(),
+            job_running: "Not available while running".into(),
+            row_busy: "Wait for this item to finish".into(),
+        }
+    }
 }
 
 /// A change to one row, found by its payload.
@@ -120,6 +174,8 @@ pub enum RowClick<P> {
     Action {
         /// The entry's [`RowAction::action`].
         action: String,
+        /// The complete menu entry, including confirmation and status text.
+        item: RowAction,
         /// The row's payload.
         payload: P,
     },
@@ -229,6 +285,9 @@ pub type SortOrder = (usize, bool);
 #[derive(Debug)]
 pub struct TableView<P> {
     spec: TableSpec<P>,
+    statuses: Vec<(P, RowStatus)>,
+    labels: TableLabels,
+    payload_text: Option<fn(&P) -> String>,
     /// Row indices in display order.
     order: Vec<usize>,
     sorted_by: Option<SortOrder>,
@@ -321,6 +380,9 @@ impl<P> TableView<P> {
             filter: SizeFilter::default(),
             updated: Instant::now(),
             running: spec.progress.is_some(),
+            statuses: Vec::new(),
+            labels: TableLabels::default(),
+            payload_text: None,
             spec,
         };
         if let Some(sort) = &view.spec.sort
@@ -330,6 +392,52 @@ impl<P> TableView<P> {
             view.sort(column, descending);
         }
         view
+    }
+
+    /// Sets the text of the built-in row menu entries.
+    #[must_use]
+    pub fn labels(mut self, labels: TableLabels) -> Self {
+        self.labels = labels;
+        self
+    }
+
+    /// Enables copying a payload through this app-provided formatter.
+    #[must_use]
+    pub fn payload_text(mut self, format: fn(&P) -> String) -> Self {
+        self.payload_text = Some(format);
+        self
+    }
+
+    /// Sets or clears the status of an existing row, accepting borrowed payloads.
+    pub fn set_status<Q>(&mut self, payload: &Q, status: Option<RowStatus>)
+    where
+        P: Borrow<Q> + Clone,
+        Q: PartialEq + ?Sized,
+    {
+        self.statuses
+            .retain(|(own, _)| Borrow::<Q>::borrow(own) != payload);
+        if let Some(status) = status
+            && let Some(own) = self
+                .spec
+                .rows
+                .iter()
+                .filter_map(|row| row.payload.as_ref())
+                .find(|own| Borrow::<Q>::borrow(*own) == payload)
+        {
+            self.statuses.push((own.clone(), status));
+        }
+    }
+
+    /// The current status of a row.
+    pub fn status<Q>(&self, payload: &Q) -> Option<&RowStatus>
+    where
+        P: Borrow<Q>,
+        Q: PartialEq + ?Sized,
+    {
+        self.statuses
+            .iter()
+            .find(|(own, _)| Borrow::<Q>::borrow(own) == payload)
+            .map(|(_, status)| status)
     }
 
     /// The spec's title.
@@ -382,7 +490,8 @@ impl<P> TableView<P> {
     }
 
     /// The control for the smallest size to show, if there are sizes at all.
-    fn filter_ui(&mut self, ui: &mut Ui, shown: usize) {
+    pub fn filter_ui(&mut self, ui: &mut Ui) {
+        let shown = self.visible().len();
         if !self
             .spec
             .columns
@@ -449,6 +558,7 @@ impl<P> TableView<P> {
         else {
             return;
         };
+        self.statuses.retain(|(own, _)| own != &update.payload);
         if update.remove {
             self.spec.rows.remove(index);
             self.order.retain(|&row| row != index);
@@ -512,7 +622,15 @@ impl<P> TableView<P> {
 
     /// New contents for the open table. The order is kept, so ties stay as
     /// the user's last sort left them.
-    pub fn update(&mut self, spec: TableSpec<P>) {
+    pub fn update(&mut self, spec: TableSpec<P>)
+    where
+        P: PartialEq,
+    {
+        self.statuses.retain(|(own, _)| {
+            spec.rows
+                .iter()
+                .any(|row| row.payload.as_ref() == Some(own))
+        });
         if spec.rows.len() != self.spec.rows.len() {
             self.order = (0..spec.rows.len()).collect();
         }
@@ -650,19 +768,27 @@ impl<P> TableView<P> {
     }
 }
 
-impl<P: Clone> TableView<P> {
+impl<P: Clone + PartialEq> TableView<P> {
     /// The context menu of a row with a payload.
     fn row_menu_ui(&self, ui: &mut Ui, row: &RowDef<P>, payload: &P) -> Option<RowClick<P>> {
         let p = Palette::of(ui);
         let mut click = None;
-        if ui.button("Open").clicked() {
+        let status = self.status(payload);
+        let busy = status.is_some_and(RowStatus::is_busy);
+        let enabled = !self.running && !busy;
+        let disabled = if busy {
+            &self.labels.row_busy
+        } else {
+            &self.labels.job_running
+        };
+        if ui.button(&self.labels.open).clicked() {
             click = Some(RowClick::Open(payload.clone()));
             ui.close();
         }
         if self.spec.refresh_action.is_some() {
             let again = ui
-                .add_enabled(!self.running, egui::Button::new("Refresh"))
-                .on_disabled_hover_text("Not available while running");
+                .add_enabled(enabled, egui::Button::new(&self.labels.refresh))
+                .on_disabled_hover_text(disabled);
             if again.clicked() {
                 click = Some(RowClick::Refresh(payload.clone()));
                 ui.close();
@@ -673,21 +799,93 @@ impl<P: Clone> TableView<P> {
         }
         for item in &row.menu {
             let mut text = RichText::new(&item.label);
-            if item.danger && !self.running {
+            if item.danger && enabled {
                 text = text.color(p.critical);
             }
             let button = ui
-                .add_enabled(!self.running, egui::Button::new(text))
-                .on_disabled_hover_text("Not available while running");
+                .add_enabled(enabled, egui::Button::new(text))
+                .on_disabled_hover_text(disabled);
             if button.clicked() {
                 click = Some(RowClick::Action {
                     action: item.action.clone(),
+                    item: item.clone(),
                     payload: payload.clone(),
                 });
                 ui.close();
             }
         }
+        if let Some(format) = self.payload_text {
+            ui.separator();
+            if ui.button(&self.labels.copy).clicked() {
+                ui.ctx().copy_text(format(payload));
+                ui.close();
+            }
+        }
         click
+    }
+
+    /// A row's first cell: its name, then what is happening to its payload.
+    fn paint_name(ui: &Ui, rect: egui::Rect, name: &str, status: Option<&RowStatus>, dim: f32) {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let color = Palette::of(ui).text.gamma_multiply(dim);
+        let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+        let Some(status) = status else {
+            painter.text(rect.left_center(), Align2::LEFT_CENTER, name, font, color);
+            return;
+        };
+        let small = egui::TextStyle::Small.resolve(ui.style());
+        let failed = matches!(status, RowStatus::Failed(_));
+        let status_color = if failed {
+            Palette::of(ui).critical
+        } else {
+            Palette::of(ui).text_weak
+        };
+        let status_galley = ui
+            .fonts_mut(|fonts| fonts.layout_no_wrap(status.text().to_owned(), small, status_color));
+        let status_width = status_galley.size().x + 18.0;
+        // The name gives way first, keeping the status readable.
+        let name_rect = egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(
+                (rect.right() - status_width - 8.0).max(rect.left()),
+                rect.bottom(),
+            ),
+        );
+        let name_galley = ui.fonts_mut(|fonts| fonts.layout_no_wrap(name.to_owned(), font, color));
+        let name_width = name_galley.size().x.min(name_rect.width());
+        ui.painter()
+            .with_clip_rect(name_rect.intersect(ui.clip_rect()))
+            .galley(
+                egui::pos2(rect.left(), rect.center().y - name_galley.size().y / 2.0),
+                name_galley,
+                color,
+            );
+        let mark = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + name_width + 8.0 + 6.0, rect.center().y),
+            egui::vec2(12.0, 12.0),
+        );
+        if failed {
+            painter.text(
+                mark.center(),
+                Align2::CENTER_CENTER,
+                "!",
+                FontId::proportional(12.0),
+                status_color,
+            );
+        } else {
+            egui::Spinner::new()
+                .size(12.0)
+                .color(status_color)
+                .paint_at(ui, mark);
+        }
+        painter.galley(
+            egui::pos2(
+                mark.right() + 6.0,
+                rect.center().y - status_galley.size().y / 2.0,
+            ),
+            status_galley,
+            status_color,
+        );
     }
 
     fn rows_ui(&self, ui: &mut Ui, visible: &[usize], menus: bool) -> Option<RowClick<P>> {
@@ -700,6 +898,10 @@ impl<P: Clone> TableView<P> {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for &index in &visible[range] {
                     let row = &self.spec.rows[index];
+                    let status = row
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| self.status(payload));
                     let clickable = row.payload.is_some();
                     let (rect, response) = ui.allocate_exact_size(
                         vec2(ui.available_width(), m.row_height),
@@ -711,13 +913,16 @@ impl<P: Clone> TableView<P> {
                     );
                     // The cells are painted, so screen readers need the row's text.
                     response.widget_info(|| {
-                        let text: Vec<String> = self
+                        let mut text: Vec<String> = self
                             .spec
                             .columns
                             .iter()
                             .map(|column| cell_text(column.kind, row.cells.get(&column.id)))
                             .filter(|text| !text.is_empty())
                             .collect();
+                        if let Some(status) = status {
+                            text.push(status.text().to_owned());
+                        }
                         let role = if clickable { Role::Button } else { Role::Label };
                         WidgetInfo::labeled(role, true, text.join(", "))
                     });
@@ -732,14 +937,21 @@ impl<P: Clone> TableView<P> {
                         .enumerate()
                     {
                         let text = cell_text(column.kind, row.cells.get(&column.id));
-                        Self::paint_cell(
-                            ui,
-                            cell_rect,
-                            position == 0,
-                            &text,
-                            FontId::proportional(m.body),
-                            p.text,
-                        );
+                        if position == 0 {
+                            Self::paint_name(ui, cell_rect, &text, status, 1.0);
+                        } else {
+                            Self::paint_cell(
+                                ui,
+                                cell_rect,
+                                false,
+                                &text,
+                                FontId::proportional(m.body),
+                                p.text,
+                            );
+                        }
+                    }
+                    if let Some(RowStatus::Failed(reason)) = status {
+                        response.clone().on_hover_text(reason);
                     }
                     let response = match &row.tooltip {
                         Some(tooltip) => response.on_hover_text(tooltip),
@@ -771,7 +983,8 @@ impl<P: Clone> TableView<P> {
         open
     }
 
-    fn draw(&mut self, ui: &mut Ui, menus: bool) -> Option<RowClick<P>> {
+    /// Draws the subtitle and update status, without controls or rows.
+    pub fn summary_ui(&self, ui: &mut Ui) {
         let weak = Palette::of(ui).text_weak;
         ui.horizontal(|ui| {
             if let Some(subtitle) = &self.subtitle_text() {
@@ -791,8 +1004,14 @@ impl<P: Clone> TableView<P> {
                 }
             });
         });
-        let shown = self.visible().len();
-        self.filter_ui(ui, shown);
+    }
+
+    /// Draws the header and rows with context menus, for a custom dialog layout.
+    pub fn body_ui(&mut self, ui: &mut Ui) -> Option<RowClick<P>> {
+        self.body(ui, true)
+    }
+
+    fn body(&mut self, ui: &mut Ui, menus: bool) -> Option<RowClick<P>> {
         ui.add_space(4.0);
         self.header_ui(ui);
         ui.separator();
@@ -804,10 +1023,16 @@ impl<P: Clone> TableView<P> {
             } else {
                 "Nothing is this large."
             };
-            ui.label(RichText::new(text).color(weak));
+            ui.label(RichText::new(text).color(Palette::of(ui).text_weak));
             return None;
         }
         self.rows_ui(ui, &visible, menus)
+    }
+
+    fn draw(&mut self, ui: &mut Ui, menus: bool) -> Option<RowClick<P>> {
+        self.summary_ui(ui);
+        self.filter_ui(ui);
+        self.body(ui, menus)
     }
 
     /// Draws the table. Returns the payload of the row clicked this frame.
