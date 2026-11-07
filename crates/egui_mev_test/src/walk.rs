@@ -1,6 +1,6 @@
 //! Walking through a task the way a user would, counting what it took.
 
-use egui::{Event, Key};
+use egui::{Event, Key, Modifiers};
 use egui_kittest::{Harness, kittest::Queryable as _};
 
 type AfterFrames<'a, S> = Box<dyn FnMut(&mut Harness<'a, S>) -> bool + 'a>;
@@ -40,12 +40,14 @@ impl<'a, S> Walk<'a, S> {
         self
     }
 
-    /// Run frames until the UI is idle and nothing is left to apply.
+    /// Run frames until the UI is idle and nothing is left to apply. A UI
+    /// that keeps repainting, such as one showing a spinner, never goes
+    /// idle; it gets the harness's `max_steps` frames instead of a panic.
     pub fn settle(&mut self) {
-        self.harness.run();
+        self.harness.run_ok();
         if let Some(apply) = &mut self.after_frames {
             while apply(&mut self.harness) {
-                self.harness.run();
+                self.harness.run_ok();
             }
         }
     }
@@ -65,6 +67,22 @@ impl<'a, S> Walk<'a, S> {
         self.settle();
     }
 
+    /// Click what has `part` in its label, as one step: for labels that carry
+    /// a count or a key hint, such as "Save (3)". The last match is the
+    /// frontmost.
+    ///
+    /// # Panics
+    /// When no label contains `part`.
+    pub fn click_containing(&mut self, part: &str) {
+        let nodes: Vec<_> = self.harness.query_all_by_label_contains(part).collect();
+        nodes
+            .last()
+            .unwrap_or_else(|| panic!("no label contains {part:?}"))
+            .click();
+        self.steps += 1;
+        self.settle();
+    }
+
     /// Type into whatever has keyboard focus.
     pub fn type_text(&mut self, text: &str) {
         self.harness
@@ -77,7 +95,12 @@ impl<'a, S> Walk<'a, S> {
 
     /// Press `key`, as one step.
     pub fn press(&mut self, key: Key) {
-        self.harness.key_press(key);
+        self.press_with(Modifiers::NONE, key);
+    }
+
+    /// Press `key` with `modifiers` held, such as Cmd+S, as one step.
+    pub fn press_with(&mut self, modifiers: Modifiers, key: Key) {
+        self.harness.key_press_modifiers(modifiers, key);
         self.steps += 1;
         self.settle();
     }
@@ -148,5 +171,26 @@ mod tests {
     #[should_panic(expected = "nothing is labelled")]
     fn clicking_what_is_not_there_says_so() {
         Walk::new(counter()).click("Missing");
+    }
+
+    #[test]
+    fn a_ui_that_keeps_repainting_still_settles() {
+        let harness = Harness::builder()
+            .with_size([300.0, 200.0])
+            .with_context_setup(|ctx| crate::install(ctx, Theme::default()))
+            .build_ui_state(
+                |ui, saved: &mut bool| {
+                    ui.spinner();
+                    if ui.button("Save (1)").clicked() {
+                        *saved = true;
+                    }
+                },
+                false,
+            );
+        let mut walk = Walk::new(harness);
+        walk.click_containing("Save");
+        assert!(*walk.harness.state());
+        walk.press_with(Modifiers::COMMAND, Key::S);
+        assert_eq!(walk.steps, 2);
     }
 }

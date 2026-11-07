@@ -85,6 +85,8 @@ This rewrites `Cargo.lock`. Restore it before committing, then pin the new rev.
 
 ## Breaking changes
 
+- **`PaletteItem` has an `enabled` field.** A struct literal adds `enabled: true`; `PaletteItem::new` sets it. `palette_items` builds the items from a `Menu` table and an `Availability`, so the palette offers and greys out what the menus do.
+
 - **Data dialogs:** `Form` now accepts `danger`, `submit_when`, `blocked` and read-only `paths` fields. `FormState::toolbar_ui` and `message_ui`, and `TableView::filter_ui`, `summary_ui` and `body_ui` let a project compose its own dialog around the shared state. `TableLabels` customizes menu text and `payload_text` enables copying a payload. `RowAction` accepts optional `busy` and `title` metadata; `RowClick::Action` includes the full entry in `item` as well as its existing `action` id. Exhaustive patterns add `item` or `..`, and Rust struct literals for the extended specs add the new fields. Table drawing and whole-table updates now require `P: PartialEq` so row statuses follow payloads rather than display indices. `set_status` and `status` accept borrowed payloads such as `&Path` for a `PathBuf`. Row updates clear their status, removed rows discard it, and busy rows disable actions until their work finishes.
 
 - **`PickerIcon` and `PickerItem` have a lifetime**, so a thumbnail resolver can borrow app state for the frame. A signature naming them changes: `fn items() -> Vec<PickerItem>` becomes `Vec<PickerItem<'static>>`, or `<'_>` when it borrows. Code that only builds them doesn't change.

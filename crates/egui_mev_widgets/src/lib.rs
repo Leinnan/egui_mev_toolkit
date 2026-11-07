@@ -40,7 +40,7 @@ pub use containers::{
 };
 pub use dialogs::{
     ButtonKind, DialogButton, DialogResult, dialog_buttons, focus_on_open, progress, sheet,
-    sheet_labeled, sheet_with, take_preview_sheet_rect,
+    sheet_done, sheet_labeled, sheet_with, take_preview_sheet_rect, take_return,
 };
 pub use forms::{
     SettingsGroup, color_swatch_row, field_row, form_label, form_label_width, grouped_form,

@@ -30,6 +30,6 @@ pub use native_menu::{
     MenuCommands, NativeMenuBar, NativeMenuOptions, accelerator, has_key_equivalent,
 };
 pub use overrides::{KeyOverrides, KeyRecorder, Recording, capture_key_press, normalize_modifiers};
-pub use palette::{CommandPalette, PaletteItem, PaletteLabels, PaletteResponse};
+pub use palette::{CommandPalette, PaletteItem, PaletteLabels, PaletteResponse, palette_items};
 pub use queue::CommandQueue;
 pub use shortcut::{ParseShortcutError, Shortcut};

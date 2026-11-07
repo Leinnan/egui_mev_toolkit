@@ -18,7 +18,7 @@
 //! |--------|---------------------------------------------|--------------|
 //! | Down   | select the next choice                      | `history`    |
 //! | Up     | select the previous one (from the first: none) | `history` |
-//! | Tab    | accept the selected choice, or the first    | —            |
+//! | Tab    | accept the selected choice, or the first    | next field   |
 //! | Enter  | accept the selected choice, else submit     | submit       |
 //! | Escape | close the popup until the next edit         | `escape`     |
 //!
@@ -243,7 +243,8 @@ impl<'a> AutoCompleteTextEdit<'a> {
                         (false, Some(_)) => state.selected = None,
                     }
                 }
-                if i.consume_key(Modifiers::NONE, Key::Tab) && open {
+                // With no popup Tab is left alone, to move the focus on.
+                if open && i.consume_key(Modifiers::NONE, Key::Tab) {
                     accept = Some(state.selected.unwrap_or(0));
                 }
                 if i.consume_key(Modifiers::NONE, Key::Enter) {
@@ -280,21 +281,6 @@ impl<'a> AutoCompleteTextEdit<'a> {
             edit = adjust(edit);
         }
         let response = ui.add(edit);
-        if response.has_focus() {
-            // The field keeps Escape, Tab and the arrows: egui would
-            // otherwise drop or move its focus on them before we see them.
-            ctx.memory_mut(|m| {
-                m.set_focus_lock_filter(
-                    edit_id,
-                    egui::EventFilter {
-                        tab: true,
-                        horizontal_arrows: true,
-                        vertical_arrows: true,
-                        escape: true,
-                    },
-                )
-            });
-        }
         if *self.text != before || accepted {
             let cursor = cursor_byte(&ctx, edit_id, self.text);
             completions = (self.completer)(self.text, cursor);
@@ -305,6 +291,23 @@ impl<'a> AutoCompleteTextEdit<'a> {
             }
         }
         open = (response.has_focus() || on_popup) && !state.dismissed && count > 0;
+        if response.has_focus() {
+            // The field keeps Escape and the arrows, and Tab while there are
+            // choices to accept: egui would otherwise drop or move its focus
+            // on them before we see them. Without a popup Tab moves on, as
+            // in any other field, so the field is never a keyboard trap.
+            ctx.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    edit_id,
+                    egui::EventFilter {
+                        tab: open,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
+                )
+            });
+        }
 
         let mut clicked = None;
         state.popup = None;
@@ -739,5 +742,31 @@ mod tests {
         assert_eq!(c.items[0].text, "addGold");
         assert_eq!(c.range, 0..3);
         assert_eq!(complete_from_list(WORDS, "").items.len(), 4);
+    }
+
+    #[test]
+    fn tab_moves_on_when_there_is_nothing_to_accept() {
+        use egui_kittest::kittest::Queryable as _;
+        let mut harness = egui_kittest::Harness::builder().build_ui_state(
+            |ui, (first, second): &mut (String, String)| {
+                AutoCompleteTextEdit::new(first, |t, _| complete_from_list(WORDS, t))
+                    .id_salt("first")
+                    .text_edit(|e| e.hint_text("first"))
+                    .show(ui)
+                    .response
+                    .labelled_by(ui.label("First").id);
+                ui.add(egui::TextEdit::singleline(second))
+                    .labelled_by(ui.label("Second").id);
+            },
+            ("zzz".to_owned(), String::new()),
+        );
+        harness.get_by_label("First").focus();
+        harness.run();
+        harness.key_press(Key::Tab);
+        harness.run();
+        assert!(
+            harness.get_by_label("Second").is_focused(),
+            "Tab stayed in a field with no choices"
+        );
     }
 }

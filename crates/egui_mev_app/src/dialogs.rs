@@ -54,6 +54,16 @@ pub trait Dialogs {
     /// A save picker. `None` if the user cancelled.
     fn save_file(&self, dialog: FileDialog) -> Option<PathBuf>;
 
+    /// An open picker for one file. `None` if the user cancelled.
+    fn pick_file(&self, dialog: FileDialog) -> Option<PathBuf> {
+        dialog.pick_file()
+    }
+
+    /// A picker for one folder. `None` if the user cancelled.
+    fn pick_folder(&self, dialog: FileDialog) -> Option<PathBuf> {
+        dialog.pick_folder()
+    }
+
     /// An error message with an OK button.
     fn error(&self, title: &str, detail: &str);
 }
@@ -131,7 +141,7 @@ impl Dialogs for NativeDialogs {
 }
 
 /// A test double that answers from a script and records what it was asked. A
-/// prompt or save picker with no scripted answer panics, so a test can't pass
+/// prompt or picker with no scripted answer panics, so a test can't pass
 /// through a dialog it didn't expect. Results go through the same normalization
 /// as [`NativeDialogs`].
 #[derive(Debug, Default)]
@@ -156,6 +166,12 @@ impl ScriptedDialogs {
 
     /// Queue the result of the next save picker.
     pub fn save_to(&self, path: Option<PathBuf>) {
+        self.paths.borrow_mut().push_back(path);
+    }
+
+    /// Queue the result of the next file or folder picker. Pickers of every
+    /// kind answer from one queue, in the order they're shown.
+    pub fn pick(&self, path: Option<PathBuf>) {
         self.paths.borrow_mut().push_back(path);
     }
 
@@ -194,6 +210,20 @@ impl Dialogs for ScriptedDialogs {
             .borrow_mut()
             .pop_front()
             .expect("unexpected save picker")
+    }
+
+    fn pick_file(&self, _dialog: FileDialog) -> Option<PathBuf> {
+        self.paths
+            .borrow_mut()
+            .pop_front()
+            .expect("unexpected file picker")
+    }
+
+    fn pick_folder(&self, _dialog: FileDialog) -> Option<PathBuf> {
+        self.paths
+            .borrow_mut()
+            .pop_front()
+            .expect("unexpected folder picker")
     }
 
     fn error(&self, title: &str, detail: &str) {
@@ -265,6 +295,24 @@ mod tests {
         assert_eq!(export(&dialogs), Some(PathBuf::from("/tmp/out.png")));
         assert_eq!(dialogs.prompts(), ["Replace?"]);
         assert!(dialogs.errors().is_empty());
+    }
+
+    #[test]
+    fn the_double_answers_pickers_in_order() {
+        let dialogs = ScriptedDialogs::new();
+        dialogs.pick(Some(PathBuf::from("/music/cover.jpg")));
+        dialogs.pick(None);
+        assert_eq!(
+            dialogs.pick_file(dialogs.file()),
+            Some(PathBuf::from("/music/cover.jpg"))
+        );
+        assert_eq!(dialogs.pick_folder(dialogs.file()), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "unexpected folder picker")]
+    fn an_unscripted_picker_fails_the_test() {
+        ScriptedDialogs::new().pick_folder(FileDialog::new());
     }
 
     #[test]

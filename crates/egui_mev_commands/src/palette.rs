@@ -7,6 +7,8 @@ use egui::{
     Atom, Button, Context, Frame, Id, Key, Margin, Modal, Modifiers, RichText, ScrollArea, Vec2,
 };
 use egui_mev_theme::{Metrics, Palette};
+
+use crate::menu::{Availability, Menu, MenuEntry};
 use egui_mev_widgets::search_field;
 use fuzzy_matcher::{FuzzyMatcher as _, skim::SkimMatcherV2};
 
@@ -24,6 +26,9 @@ pub struct PaletteItem<A> {
     pub name: Cow<'static, str>,
     /// Keyboard shortcut shown next to the name.
     pub shortcut: Option<String>,
+    /// Whether it would do something now. A disabled item is listed greyed
+    /// out, so a search still finds it, and can't be chosen.
+    pub enabled: bool,
 }
 
 impl<A> PaletteItem<A> {
@@ -34,6 +39,7 @@ impl<A> PaletteItem<A> {
             action,
             name: name.into(),
             shortcut: None,
+            enabled: true,
         }
     }
 
@@ -43,6 +49,53 @@ impl<A> PaletteItem<A> {
         self.shortcut = shortcut;
         self
     }
+
+    /// Enabled or not, such as from [`Availability::enabled`].
+    #[must_use]
+    pub const fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
+/// Every command item in `menus`, submenus included, as palette items: the
+/// label `availability` gives it now, its shortcut as this platform writes
+/// it, and greyed out when it wouldn't do anything. So the palette offers
+/// what the menus do, the same way.
+#[must_use]
+pub fn palette_items<C: Clone>(
+    ctx: &Context,
+    menus: &[Menu<C>],
+    availability: &impl Availability<C>,
+) -> Vec<PaletteItem<C>> {
+    fn collect<C: Clone>(
+        ctx: &Context,
+        entries: &[MenuEntry<C>],
+        availability: &impl Availability<C>,
+        out: &mut Vec<PaletteItem<C>>,
+    ) {
+        for entry in entries {
+            match entry {
+                MenuEntry::Item(item) => {
+                    let name = availability
+                        .label(&item.command)
+                        .map_or_else(|| item.label.clone(), |l| Cow::Owned(l.into_owned()));
+                    out.push(
+                        PaletteItem::new(name, item.command.clone())
+                            .shortcut(item.shortcut.map(|s| ctx.format_shortcut(&s)))
+                            .enabled(availability.enabled(&item.command)),
+                    );
+                }
+                MenuEntry::Submenu { entries, .. } => collect(ctx, entries, availability, out),
+                MenuEntry::Disabled { .. } | MenuEntry::Separator | MenuEntry::Section(_) => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for menu in menus {
+        collect(ctx, &menu.entries, availability, &mut out);
+    }
+    out
 }
 
 /// The palette's words.
@@ -191,20 +244,29 @@ impl<A: Clone> CommandPalette<A> {
                 if ranked.is_empty() {
                     ui.label(RichText::new(self.labels.no_matches.as_ref()).color(p.text_weak));
                 } else {
-                    if down {
-                        self.selected = (self.selected + 1).min(ranked.len() - 1);
-                    }
-                    if up {
-                        self.selected = self.selected.saturating_sub(1);
-                    }
+                    let enabled = |row: usize| self.items[ranked[row]].enabled;
                     self.selected = self.selected.min(ranked.len() - 1);
+                    // Up and Down pass over what can't be chosen.
+                    if down
+                        && let Some(next) = (self.selected + 1..ranked.len()).find(|&r| enabled(r))
+                    {
+                        self.selected = next;
+                    }
+                    if up && let Some(previous) = (0..self.selected).rev().find(|&r| enabled(r)) {
+                        self.selected = previous;
+                    }
+                    if !enabled(self.selected)
+                        && let Some(first) = (0..ranked.len()).find(|&r| enabled(r))
+                    {
+                        self.selected = first;
+                    }
                     ScrollArea::vertical()
                         .max_height((ctx.content_rect().height() - CHROME_HEIGHT).max(m.row_height))
                         .show(ui, |ui| {
                             for (row, &index) in ranked.iter().enumerate() {
                                 let item = &self.items[index];
                                 // egui's selected text is the accent on an accent fill.
-                                let selected = row == self.selected;
+                                let selected = row == self.selected && item.enabled;
                                 let name = RichText::new(item.name.as_ref()).color(p.text);
                                 let button = Button::selectable(selected, name)
                                     .min_size(Vec2::new(ui.available_width(), m.row_height));
@@ -215,7 +277,7 @@ impl<A: Clone> CommandPalette<A> {
                                     // Keeps the name on the left, like the others.
                                     None => button.right_text(Atom::grow()),
                                 };
-                                let response = ui.add(button);
+                                let response = ui.add_enabled(item.enabled, button);
                                 if response.clicked() {
                                     chosen = Some(item.action.clone());
                                 }
@@ -224,8 +286,9 @@ impl<A: Clone> CommandPalette<A> {
                                 }
                             }
                         });
-                    if enter {
-                        chosen = Some(self.items[ranked[self.selected]].action.clone());
+                    let item = &self.items[ranked[self.selected]];
+                    if enter && item.enabled {
+                        chosen = Some(item.action.clone());
                     }
                 }
                 ui.separator();
@@ -429,5 +492,74 @@ mod tests {
         let palette = &harness.state().palette;
         assert_eq!((palette.query.as_str(), palette.selected), ("", 0));
         assert!(!palette.focus_requested);
+    }
+
+    #[test]
+    fn a_disabled_item_is_listed_but_passed_over() {
+        let mut harness = harness();
+        let mut items = items();
+        items[1] = items[1].clone().enabled(false);
+        harness.state_mut().palette.reopen(items);
+        harness.run();
+        assert!(
+            harness.query_by_label("Open in new tab").is_some(),
+            "still listed"
+        );
+        harness.key_press(Key::ArrowDown);
+        harness.run();
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().ran, vec!["window"]);
+
+        // Searched for, it can't be run.
+        harness.state_mut().palette.reopen({
+            let mut items = super::tests::items();
+            items[1] = items[1].clone().enabled(false);
+            items
+        });
+        harness.run();
+        harness.event(egui::Event::Text("new tab".to_owned()));
+        harness.run();
+        harness.key_press(Key::Enter);
+        harness.run();
+        harness.get_by_label("Open in new tab").click();
+        harness.run();
+        assert_eq!(harness.state().ran, vec!["window"]);
+    }
+
+    #[test]
+    fn the_menus_give_the_palette_its_items() {
+        use crate::menu::{Availability, Menu, MenuEntry, MenuItem};
+        use egui::{KeyboardShortcut, Modifiers};
+
+        struct NoPaste;
+        impl Availability<&'static str> for NoPaste {
+            fn enabled(&self, command: &&'static str) -> bool {
+                *command != "paste"
+            }
+            fn label(&self, command: &&'static str) -> Option<Cow<'_, str>> {
+                (*command == "undo").then_some(Cow::Borrowed("Undo Rename"))
+            }
+        }
+        let menus = vec![Menu::new(
+            "Edit",
+            vec![
+                MenuItem::new("Undo", "undo")
+                    .shortcut(KeyboardShortcut::new(Modifiers::COMMAND, Key::Z))
+                    .into(),
+                MenuEntry::Separator,
+                MenuEntry::submenu("More", vec![MenuItem::new("Paste", "paste").into()]),
+            ],
+        )];
+        let ctx = egui::Context::default();
+        // Formatting a shortcut needs the fonts of a first frame.
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let items = palette_items(&ctx, &menus, &NoPaste);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].name, "Undo Rename");
+        assert!(items[0].shortcut.is_some() && items[0].enabled);
+        assert_eq!((items[1].action, items[1].enabled), ("paste", false));
     }
 }

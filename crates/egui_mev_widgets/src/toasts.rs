@@ -8,6 +8,15 @@
 //! // Once per frame, after the panels:
 //! Toasts::show(ctx);
 //! ```
+//!
+//! A toast can carry one button, such as Undo, for the moment after an action
+//! when undoing it is most likely:
+//!
+//! ```ignore
+//! Toasts::push_action(ctx, "Applied Kind of Blue", ToastKind::Ok, "Undo", undo_id);
+//! // Each frame:
+//! if Toasts::acted(ctx, undo_id) { undo() }
+//! ```
 
 use egui::{
     Align2, Context, CornerRadius, FontId, Id, Rect, Role, Sense, Stroke, StrokeKind, Vec2,
@@ -22,6 +31,8 @@ use crate::marks;
 const HOLD: f64 = 1.8;
 /// Seconds a warning stays fully visible.
 const WARN_HOLD: f64 = 6.0;
+/// Seconds at least a toast with a button stays, to give time to press it.
+const ACTION_HOLD: f64 = 8.0;
 const FADE: f64 = 0.5;
 /// Most toasts kept at once (the oldest go first).
 const MAX_VISIBLE: usize = 4;
@@ -33,6 +44,8 @@ const EDGE: f32 = 14.0;
 /// Size of a toast's severity icon, and its gap to the text (points).
 const ICON: f32 = 14.0;
 const ICON_GAP: f32 = 8.0;
+/// Space either side of a toast button's label (points).
+const ACTION_PAD: f32 = 6.0;
 
 /// What a toast says, which sets how it looks and how long it stays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,12 +86,28 @@ struct Toast {
     kind: ToastKind,
     /// `None` until first drawn, so a hidden window doesn't use up its time.
     shown_at: Option<f64>,
+    /// A button's label, and what [`Toasts::acted`] knows it by.
+    action: Option<(String, Id)>,
+}
+
+impl Toast {
+    /// Seconds it stays fully visible; `None` until dismissed.
+    fn hold(&self) -> Option<f64> {
+        let hold = self.kind.hold()?;
+        Some(if self.action.is_some() {
+            hold.max(ACTION_HOLD)
+        } else {
+            hold
+        })
+    }
 }
 
 /// The live toasts of a [`Context`].
 #[derive(Debug, Clone, Default)]
 pub struct Toasts {
     toasts: Vec<Toast>,
+    /// Buttons pressed and not yet asked about.
+    acted: Vec<Id>,
 }
 
 fn state_id() -> Id {
@@ -91,9 +120,40 @@ impl Toasts {
         let text = text.into();
         ctx.data_mut(|data| {
             data.get_temp_mut_or_default::<Self>(state_id())
-                .add(text, kind);
+                .add(text, kind, None);
         });
         ctx.request_repaint();
+    }
+
+    /// Queue a toast with a button labelled `action`, such as "Undo", that
+    /// stays at least eight seconds. [`Self::acted`] with `key` says when the
+    /// button was pressed; pressing it also dismisses the toast.
+    pub fn push_action(
+        ctx: &Context,
+        text: impl Into<String>,
+        kind: ToastKind,
+        action: impl Into<String>,
+        key: Id,
+    ) {
+        let text = text.into();
+        let action = Some((action.into(), key));
+        ctx.data_mut(|data| {
+            data.get_temp_mut_or_default::<Self>(state_id())
+                .add(text, kind, action);
+        });
+        ctx.request_repaint();
+    }
+
+    /// Whether the button of the toast pushed with `key` was pressed since the
+    /// last ask. Ask once per frame.
+    #[must_use]
+    pub fn acted(ctx: &Context, key: Id) -> bool {
+        ctx.data_mut(|data| {
+            let state = data.get_temp_mut_or_default::<Self>(state_id());
+            let before = state.acted.len();
+            state.acted.retain(|k| *k != key);
+            state.acted.len() != before
+        })
     }
 
     /// Queue a [`ToastKind::Info`] toast.
@@ -149,12 +209,13 @@ impl Toasts {
             .unwrap_or_default()
     }
 
-    fn add(&mut self, text: String, kind: ToastKind) {
+    fn add(&mut self, text: String, kind: ToastKind, action: Option<(String, Id)>) {
         self.toasts.retain(|toast| toast.text != text);
         self.toasts.push(Toast {
             text,
             kind,
             shown_at: None,
+            action,
         });
         if self.toasts.len() > MAX_VISIBLE {
             self.toasts.drain(..self.toasts.len() - MAX_VISIBLE);
@@ -168,7 +229,7 @@ impl Toasts {
             toast.shown_at.get_or_insert(now);
         }
         self.toasts.retain(|toast| {
-            toast.kind.hold().is_none_or(|hold| {
+            toast.hold().is_none_or(|hold| {
                 toast
                     .shown_at
                     .is_none_or(|shown_at| now - shown_at < hold + FADE)
@@ -186,9 +247,9 @@ impl Toasts {
         let mut bottom = area.bottom() - EDGE;
         let mut dismissed = Vec::new();
         for (ix, toast) in self.toasts.iter_mut().enumerate().rev() {
-            let sticky = toast.kind.hold().is_none();
+            let sticky = toast.hold().is_none();
             let age = now - toast.shown_at.unwrap_or(now);
-            let alpha = toast.kind.hold().map_or(1.0, |hold| {
+            let alpha = toast.hold().map_or(1.0, |hold| {
                 if age < hold {
                     1.0
                 } else {
@@ -205,7 +266,20 @@ impl Toasts {
                 )
             });
             let close_space = if sticky { 22.0 } else { 0.0 };
-            let size = galley.size() + vec2(28.0 + ICON + ICON_GAP + close_space, 16.0);
+            let action_galley = toast.action.as_ref().map(|(label, _)| {
+                ctx.fonts_mut(|fonts| {
+                    fonts.layout_no_wrap(
+                        label.clone(),
+                        FontId::proportional(m.body),
+                        p.accent.gamma_multiply(alpha),
+                    )
+                })
+            });
+            let action_space = action_galley
+                .as_ref()
+                .map_or(0.0, |g| g.size().x + 2.0 * ACTION_PAD + 8.0);
+            let size =
+                galley.size() + vec2(28.0 + ICON + ICON_GAP + close_space + action_space, 16.0);
             let rect = Rect::from_min_size(
                 egui::pos2(area.right() - EDGE - size.x, bottom - size.y),
                 size,
@@ -251,6 +325,34 @@ impl Toasts {
                         )
                         .min;
                     painter.galley(text_min, galley, text_color);
+                    let mut acted = false;
+                    if let (Some(action_galley), Some((label, _))) = (action_galley, &toast.action)
+                    {
+                        let button = Rect::from_center_size(
+                            rect.right_center()
+                                - vec2(
+                                    close_space + 14.0 + action_galley.size().x / 2.0 + ACTION_PAD,
+                                    0.0,
+                                ),
+                            action_galley.size() + vec2(2.0 * ACTION_PAD, 6.0),
+                        );
+                        let pressed =
+                            ui.interact(button, id.with(("action", &toast.text)), Sense::click());
+                        if pressed.hovered() {
+                            painter.rect_filled(
+                                button,
+                                CornerRadius::same(m.control_radius),
+                                p.accent.gamma_multiply(0.15 * alpha),
+                            );
+                        }
+                        painter.galley(
+                            button.center() - action_galley.size() / 2.0,
+                            action_galley,
+                            p.accent,
+                        );
+                        pressed.widget_info(|| WidgetInfo::labeled(Role::Button, true, label));
+                        acted = pressed.clicked();
+                    }
                     if sticky {
                         marks::cross(
                             painter,
@@ -263,14 +365,20 @@ impl Toasts {
                             },
                         );
                     }
-                    response
+                    (response, acted)
                 })
                 .inner;
+            let (response, acted) = response;
             // Hovering holds a fading toast; clicking any toast dismisses it.
-            if response.hovered() && !sticky {
+            if (response.hovered() || response.contains_pointer()) && !sticky {
                 toast.shown_at = Some(now);
             }
-            if response.clicked() {
+            if acted {
+                if let Some((_, key)) = &toast.action {
+                    self.acted.push(*key);
+                }
+                dismissed.push(ix);
+            } else if response.clicked() {
                 dismissed.push(ix);
             }
             let response = if sticky {
@@ -291,7 +399,7 @@ impl Toasts {
             .toasts
             .iter()
             .filter_map(|toast| {
-                let hold = toast.kind.hold()?;
+                let hold = toast.hold()?;
                 Some(hold - (now - toast.shown_at.unwrap_or(now)))
             })
             .fold(f64::INFINITY, f64::min);
@@ -335,10 +443,10 @@ mod tests {
     #[test]
     fn fading_kinds_expire_after_their_time_but_errors_stay() {
         let mut toasts = Toasts::default();
-        toasts.add("note".to_owned(), ToastKind::Info);
-        toasts.add("saved".to_owned(), ToastKind::Ok);
-        toasts.add("careful".to_owned(), ToastKind::Warn);
-        toasts.add("failed".to_owned(), ToastKind::Error);
+        toasts.add("note".to_owned(), ToastKind::Info, None);
+        toasts.add("saved".to_owned(), ToastKind::Ok, None);
+        toasts.add("careful".to_owned(), ToastKind::Warn, None);
+        toasts.add("failed".to_owned(), ToastKind::Error, None);
 
         toasts.expire(10.0);
         assert_eq!(texts(&toasts), ["note", "saved", "careful", "failed"]);
@@ -362,9 +470,9 @@ mod tests {
     #[test]
     fn repeated_messages_refresh_instead_of_stacking() {
         let mut toasts = Toasts::default();
-        toasts.add("first".to_owned(), ToastKind::Info);
-        toasts.add("second".to_owned(), ToastKind::Info);
-        toasts.add("first".to_owned(), ToastKind::Ok);
+        toasts.add("first".to_owned(), ToastKind::Info, None);
+        toasts.add("second".to_owned(), ToastKind::Info, None);
+        toasts.add("first".to_owned(), ToastKind::Ok, None);
 
         assert_eq!(texts(&toasts), ["second", "first"]);
         assert_eq!(toasts.toasts[1].kind, ToastKind::Ok);
@@ -388,7 +496,7 @@ mod tests {
     fn only_the_newest_toasts_are_kept() {
         let mut toasts = Toasts::default();
         for n in 0..MAX_VISIBLE + 2 {
-            toasts.add(format!("toast {n}"), ToastKind::Error);
+            toasts.add(format!("toast {n}"), ToastKind::Error, None);
         }
 
         assert_eq!(toasts.toasts.len(), MAX_VISIBLE);
@@ -510,5 +618,50 @@ mod tests {
             assert!(colors.contains(&palette.critical), "{mode:?}");
             assert!(colors.contains(&palette.success), "{mode:?}");
         }
+    }
+
+    #[test]
+    fn a_toast_with_a_button_stays_long_enough_to_press_it() {
+        let mut toasts = Toasts::default();
+        let key = Id::unique("undo");
+        toasts.add("saved".to_owned(), ToastKind::Ok, None);
+        toasts.add(
+            "applied".to_owned(),
+            ToastKind::Ok,
+            Some(("Undo".to_owned(), key)),
+        );
+        toasts.expire(10.0);
+        toasts.expire(10.0 + HOLD + FADE);
+        assert_eq!(texts(&toasts), ["applied"]);
+        toasts.expire(10.0 + ACTION_HOLD + FADE);
+        assert!(toasts.toasts.is_empty());
+    }
+
+    #[test]
+    fn pressing_a_toast_button_is_reported_once_and_dismisses_it() {
+        let key = Id::unique("undo");
+        let mut harness = Harness::builder().with_size([600.0, 300.0]).build_ui_state(
+            |ui, acted: &mut u32| {
+                if Toasts::acted(ui.ctx(), key) {
+                    *acted += 1;
+                }
+                Toasts::show(ui.ctx());
+            },
+            0,
+        );
+        Toasts::push_action(
+            &harness.ctx,
+            "Applied Kind of Blue",
+            ToastKind::Ok,
+            "Undo",
+            key,
+        );
+        harness.run();
+        harness.get_by_label("Undo").click();
+        harness.run();
+        assert_eq!(*harness.state(), 1);
+        assert!(Toasts::live(&harness.ctx).is_empty(), "dismissed");
+        harness.run();
+        assert_eq!(*harness.state(), 1, "reported once");
     }
 }

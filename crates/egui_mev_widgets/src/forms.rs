@@ -335,6 +335,28 @@ impl SettingsGroup<'_> {
     pub fn note(&mut self, text: &str) {
         self.row("", Some(text), |_| {});
     }
+
+    /// What's wrong with the row above, under it, such as "That folder doesn't
+    /// exist": a caution mark and the text, with no divider of its own.
+    pub fn warning(&mut self, text: &str) {
+        let ui = &mut *self.ui;
+        let color = Palette::of(ui).caution;
+        let width = ui.available_width();
+        let galley = ui.painter().layout(
+            text.to_owned(),
+            TextStyle::Small.resolve(ui.style()),
+            color,
+            width - 20.0,
+        );
+        let height = galley.size().y.max(14.0);
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, height + 8.0), Sense::hover());
+        let icon = egui::Rect::from_min_size(rect.min + Vec2::new(0.0, 1.0), Vec2::splat(14.0));
+        crate::marks::severity(ui.painter(), icon, crate::BannerKind::Warning, color);
+        ui.painter()
+            .galley(rect.min + Vec2::new(20.0, 0.0), galley, color);
+        response.widget_info(|| WidgetInfo::labeled(Role::Label, true, text));
+    }
 }
 
 fn setting_row<R>(
@@ -804,11 +826,13 @@ mod tests {
                         toggle_switch(ui, on, "Sounds switch");
                     });
                     group.note("Changes apply at once.");
+                    group.warning("Sounds are muted in Focus mode.");
                 });
             },
             false,
         );
         harness.run();
+        harness.get_by_label("Sounds are muted in Focus mode.");
         harness.get_by_label("Sounds switch").click();
         harness.run();
         assert!(*harness.state());

@@ -147,6 +147,39 @@ pub fn sheet_labeled(
     ok: &str,
     body: impl FnOnce(&mut Ui),
 ) -> DialogResult {
+    sheet_impl(ctx, title, width, preview, ok, true, body)
+}
+
+/// A sheet with only its default button, labelled `done` ("Done", "Close"),
+/// for one whose changes apply as they're made, such as settings, so there is
+/// nothing to cancel. The button and Return give [`DialogResult::Accepted`],
+/// Escape [`DialogResult::Cancelled`]; both mean the sheet closed.
+pub fn sheet_done(
+    ctx: &Context,
+    title: &str,
+    width: f32,
+    done: &str,
+    body: impl FnOnce(&mut Ui),
+) -> DialogResult {
+    sheet_impl(ctx, title, width, false, done, false, body)
+}
+
+/// For a one-line field in a sheet that acts on Return itself, such as a
+/// search field: whether Return just left `field`. It takes the key, so the
+/// sheet doesn't also take it for its default button and close.
+pub fn take_return(ui: &Ui, field: &Response) -> bool {
+    field.lost_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+}
+
+fn sheet_impl(
+    ctx: &Context,
+    title: &str,
+    width: f32,
+    preview: bool,
+    ok: &str,
+    cancel: bool,
+    body: impl FnOnce(&mut Ui),
+) -> DialogResult {
     let family = ThemeFamily::of_ctx(ctx);
     let id = Id::unique(("egui_mev_widgets::sheet", title));
     let mut modal = sheet_modal(ctx, id);
@@ -167,8 +200,8 @@ pub fn sheet_labeled(
         .max_height(room)
         .auto_shrink([false, true]);
     let modal = modal.show(ctx, |ui| match family {
-        ThemeFamily::Graphite => macos_sheet(ui, title, width, scroll, ok, body),
-        ThemeFamily::Fluent => content_dialog(ui, title, width, scroll, ok, body),
+        ThemeFamily::Graphite => macos_sheet(ui, title, width, scroll, ok, cancel, body),
+        ThemeFamily::Fluent => content_dialog(ui, title, width, scroll, ok, cancel, body),
     });
     let mut result = modal.inner;
     if preview {
@@ -183,21 +216,35 @@ pub fn sheet_labeled(
     {
         result = DialogResult::Cancelled;
     }
-    // Return accepts, unless it is choosing an item in an open popup.
-    if result == DialogResult::Open && !popup && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+    // A focused button in the sheet takes Return as its own click, so the
+    // sheet mustn't also take it. A text field passes Return on, unless it
+    // took it with [`take_return`].
+    let focused_button = ctx
+        .memory(|m| m.focused())
+        .filter(|id| egui::text_edit::TextEditState::load(ctx, *id).is_none())
+        .and_then(|id| ctx.read_response(id))
+        .is_some_and(|r| modal.response.rect.contains_rect(r.rect));
+    // Return accepts, unless it is choosing an item in an open popup, clicking
+    // a focused button, or was taken by a field that acts on it.
+    if result == DialogResult::Open
+        && !popup
+        && !focused_button
+        && ctx.input(|i| i.key_pressed(egui::Key::Enter))
+    {
         result = DialogResult::Accepted;
     }
     result
 }
 
-/// A macOS sheet: a title, the body with muted labels, and Cancel to the left of
-/// the default button at the right.
+/// A macOS sheet: a title, the body with muted labels, and Cancel (when there is
+/// one) to the left of the default button at the right.
 fn macos_sheet(
     ui: &mut Ui,
     title: &str,
     width: f32,
     scroll: egui::ScrollArea,
     ok: &str,
+    cancel: bool,
     body: impl FnOnce(&mut Ui),
 ) -> DialogResult {
     let p = Palette::of(ui);
@@ -216,7 +263,7 @@ fn macos_sheet(
         if primary_button(ui, ok).clicked() {
             result = DialogResult::Accepted;
         }
-        if secondary_button(ui, "Cancel").clicked() {
+        if cancel && secondary_button(ui, "Cancel").clicked() {
             result = DialogResult::Cancelled;
         }
     });
@@ -224,13 +271,14 @@ fn macos_sheet(
 }
 
 /// A `WinUI` `ContentDialog`: a semibold title, the body, and a footer band with
-/// the default button and Cancel side by side.
+/// the default button and Cancel (when there is one) side by side.
 fn content_dialog(
     ui: &mut Ui,
     title: &str,
     width: f32,
     scroll: egui::ScrollArea,
     ok: &str,
+    cancel: bool,
     body: impl FnOnce(&mut Ui),
 ) -> DialogResult {
     let p = Palette::of(ui);
@@ -244,12 +292,14 @@ fn content_dialog(
     });
     let mut result = DialogResult::Open;
     content_dialog_footer(ui, |ui| {
+        // A lone button takes the second column, as in a `ContentDialog`.
+        let ok_column = usize::from(!cancel);
         equal_columns(ui, 2, |index, ui| {
-            if index == 0 {
+            if index == ok_column {
                 if primary_button(ui, ok).clicked() {
                     result = DialogResult::Accepted;
                 }
-            } else if secondary_button(ui, "Cancel").clicked() {
+            } else if cancel && secondary_button(ui, "Cancel").clicked() {
                 result = DialogResult::Cancelled;
             }
         });
@@ -554,6 +604,99 @@ mod tests {
             harness.key_press(Key::Escape);
             harness.run();
             assert_eq!(harness.state().0, DialogResult::Cancelled, "{family:?}");
+        }
+    }
+
+    /// A sheet with a search field that acts on Return, and a field that
+    /// doesn't. The state counts searches.
+    fn search_harness<'a>(family: ThemeFamily) -> Harness<'a, (DialogResult, u32)> {
+        Harness::builder()
+            .with_size([600.0, 400.0])
+            .with_context_setup(move |ctx| egui_mev_test::install(ctx, family_theme(family)))
+            .build_ui_state(
+                |ui, (result, searches): &mut (DialogResult, u32)| {
+                    let mut query = String::new();
+                    let mut name = String::new();
+                    let outcome = sheet(ui.ctx(), "Find", 300.0, |ui| {
+                        let search = ui
+                            .add(egui::TextEdit::singleline(&mut query))
+                            .labelled_by(ui.label("Search").id);
+                        if take_return(ui, &search) {
+                            *searches += 1;
+                        }
+                        ui.add(egui::TextEdit::singleline(&mut name))
+                            .labelled_by(ui.label("Name").id);
+                        let _ = ui.button("Use");
+                    });
+                    if outcome != DialogResult::Open {
+                        *result = outcome;
+                    }
+                },
+                (DialogResult::Open, 0),
+            )
+    }
+
+    #[test]
+    fn return_in_a_field_that_takes_it_keeps_the_sheet_open() {
+        for family in FAMILIES {
+            let mut harness = search_harness(family);
+            harness.run();
+            harness.get_by_label("Search").focus();
+            harness.run();
+            harness.key_press(Key::Enter);
+            harness.run();
+            assert_eq!(*harness.state(), (DialogResult::Open, 1), "{family:?}");
+        }
+    }
+
+    #[test]
+    fn return_in_any_other_field_still_accepts() {
+        for family in FAMILIES {
+            let mut harness = search_harness(family);
+            harness.run();
+            harness.get_by_label("Name").focus();
+            harness.run();
+            harness.key_press(Key::Enter);
+            harness.run();
+            assert_eq!(harness.state().0, DialogResult::Accepted, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn return_on_a_focused_button_is_that_button_s() {
+        for family in FAMILIES {
+            let mut harness = search_harness(family);
+            harness.run();
+            harness.get_by_label("Use").focus();
+            harness.run();
+            harness.key_press(Key::Enter);
+            harness.run();
+            assert_eq!(harness.state().0, DialogResult::Open, "{family:?}");
+        }
+    }
+
+    #[test]
+    fn a_done_sheet_has_one_button() {
+        for family in FAMILIES {
+            let mut harness = Harness::builder()
+                .with_size([600.0, 400.0])
+                .with_context_setup(move |ctx| egui_mev_test::install(ctx, family_theme(family)))
+                .build_ui_state(
+                    |ui, result: &mut DialogResult| {
+                        let outcome = sheet_done(ui.ctx(), "Settings", 240.0, "Done", |ui| {
+                            ui.label("Body");
+                        });
+                        if outcome != DialogResult::Open {
+                            *result = outcome;
+                        }
+                    },
+                    DialogResult::Open,
+                );
+            harness.run();
+            assert!(harness.query_by_label("Cancel").is_none(), "{family:?}");
+            harness.get_by_label("Done").click();
+            harness.run();
+            assert_eq!(*harness.state(), DialogResult::Accepted, "{family:?}");
         }
     }
 
